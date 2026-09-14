@@ -1,4 +1,5 @@
 import './style.css'
+import { decodeGb7 } from './gb7'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -23,7 +24,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <input
       id="fileInput"
       type="file"
-      accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+      accept=".png,.jpg,.jpeg,.gb7,image/png,image/jpeg"
       hidden
     />
   </div>
@@ -36,17 +37,13 @@ const emptyState = document.querySelector<HTMLDivElement>('#emptyState')!
 const imageSize = document.querySelector<HTMLSpanElement>('#imageSize')!
 const context = canvas.getContext('2d')!
 
-openButton.addEventListener('click', () => {
-  fileInput.click()
-})
+function showCanvas(width: number, height: number) {
+  emptyState.hidden = true
+  canvas.hidden = false
+  imageSize.textContent = `Размер: ${width} x ${height}`
+}
 
-fileInput.addEventListener('change', () => {
-  const file = fileInput.files?.[0]
-
-  if (!file) {
-    return
-  }
-
+function openBrowserImage(file: File) {
   const image = new Image()
   const url = URL.createObjectURL(file)
 
@@ -56,13 +53,49 @@ fileInput.addEventListener('change', () => {
 
     context.clearRect(0, 0, canvas.width, canvas.height)
     context.drawImage(image, 0, 0)
-
-    emptyState.hidden = true
-    canvas.hidden = false
-    imageSize.textContent = `Размер: ${canvas.width} x ${canvas.height}`
+    showCanvas(canvas.width, canvas.height)
 
     URL.revokeObjectURL(url)
   }
 
+  image.onerror = () => {
+    URL.revokeObjectURL(url)
+    alert('Не удалось открыть изображение')
+  }
+
   image.src = url
+}
+
+async function openGb7(file: File) {
+  try {
+    const buffer = await file.arrayBuffer()
+    const image = decodeGb7(buffer)
+
+    canvas.width = image.width
+    canvas.height = image.height
+    context.putImageData(image.data, 0, 0)
+    showCanvas(image.width, image.height)
+  } catch {
+    alert('Не удалось открыть файл GB7')
+  }
+}
+
+openButton.addEventListener('click', () => {
+  fileInput.click()
+})
+
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files?.[0]
+
+  if (!file) {
+    return
+  }
+
+  if (file.name.toLowerCase().endsWith('.gb7')) {
+    await openGb7(file)
+  } else {
+    openBrowserImage(file)
+  }
+
+  fileInput.value = ''
 })
