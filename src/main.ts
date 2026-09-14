@@ -1,5 +1,6 @@
 import './style.css'
 import { decodeGb7, encodeGb7 } from './gb7'
+import { getImageDepth } from './image-info'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -64,38 +65,6 @@ function getBaseName(fileName: string) {
   return dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName
 }
 
-async function getPngDepth(file: File) {
-  const header = new Uint8Array(await file.slice(0, 26).arrayBuffer())
-
-  if (header.length < 26) {
-    return 'неизвестно'
-  }
-
-  const bitDepth = header[24]
-  const colorType = header[25]
-  const channels: Record<number, number> = {
-    0: 1,
-    2: 3,
-    4: 2,
-    6: 4,
-  }
-
-  if (colorType === 3) {
-    return `${bitDepth} бит (палитра)`
-  }
-
-  const channelCount = channels[colorType]
-  return channelCount ? `${bitDepth * channelCount} бит` : 'неизвестно'
-}
-
-async function getBrowserImageDepth(file: File) {
-  if (file.name.toLowerCase().endsWith('.png')) {
-    return getPngDepth(file)
-  }
-
-  return '24 бит'
-}
-
 function openBrowserImage(file: File) {
   const image = new Image()
   const url = URL.createObjectURL(file)
@@ -107,7 +76,7 @@ function openBrowserImage(file: File) {
     context.clearRect(0, 0, canvas.width, canvas.height)
     context.drawImage(image, 0, 0)
 
-    const depth = await getBrowserImageDepth(file)
+    const depth = await getImageDepth(file)
     showCanvas(canvas.width, canvas.height, depth)
     URL.revokeObjectURL(url)
   }
