@@ -1,6 +1,7 @@
 import './style.css'
 import { decodeGb7, encodeGb7 } from './gb7'
-import { getImageDepth } from './image-info'
+import { getImageInfo } from './image-info'
+import { renderChannels, type ChannelType } from './channels'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -18,9 +19,16 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div>
     </header>
 
-    <main class="workspace">
-      <div id="emptyState" class="empty-state">Изображение не открыто</div>
-      <canvas id="canvas" hidden></canvas>
+    <main class="main-area">
+      <section class="workspace">
+        <div id="emptyState" class="empty-state">Изображение не открыто</div>
+        <canvas id="canvas" hidden></canvas>
+      </section>
+
+      <aside id="channelsPanel" class="channels-panel" hidden>
+        <div class="channels-title">Каналы</div>
+        <div id="channelsList" class="channels-list"></div>
+      </aside>
     </main>
 
     <footer class="statusbar">
@@ -47,17 +55,25 @@ const emptyState = document.querySelector<HTMLDivElement>('#emptyState')!
 const imageWidth = document.querySelector<HTMLSpanElement>('#imageWidth')!
 const imageHeight = document.querySelector<HTMLSpanElement>('#imageHeight')!
 const colorDepth = document.querySelector<HTMLSpanElement>('#colorDepth')!
+const channelsPanel = document.querySelector<HTMLElement>('#channelsPanel')!
+const channelsList = document.querySelector<HTMLDivElement>('#channelsList')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
+let currentImageData: ImageData | null = null
 
-function showCanvas(width: number, height: number, depth: string) {
+function showCanvas(width: number, height: number, depth: string, channels: ChannelType[]) {
   emptyState.hidden = true
   canvas.hidden = false
+  channelsPanel.hidden = false
   saveButton.disabled = false
   imageWidth.textContent = `Ширина: ${width} px`
   imageHeight.textContent = `Высота: ${height} px`
   colorDepth.textContent = `Глубина цвета: ${depth}`
+
+  if (currentImageData) {
+    renderChannels(channelsList, currentImageData, channels)
+  }
 }
 
 function getBaseName(fileName: string) {
@@ -76,8 +92,9 @@ function openBrowserImage(file: File) {
     context.clearRect(0, 0, canvas.width, canvas.height)
     context.drawImage(image, 0, 0)
 
-    const depth = await getImageDepth(file)
-    showCanvas(canvas.width, canvas.height, depth)
+    currentImageData = context.getImageData(0, 0, canvas.width, canvas.height)
+    const info = await getImageInfo(file)
+    showCanvas(canvas.width, canvas.height, info.depth, info.channels)
     URL.revokeObjectURL(url)
   }
 
@@ -97,7 +114,9 @@ async function openGb7(file: File) {
     canvas.width = image.width
     canvas.height = image.height
     context.putImageData(image.data, 0, 0)
-    showCanvas(image.width, image.height, image.hasMask ? '7 бит + маска' : '7 бит')
+    currentImageData = image.data
+    const channels: ChannelType[] = image.hasMask ? ['gray', 'mask'] : ['gray']
+    showCanvas(image.width, image.height, image.hasMask ? '7 бит + маска' : '7 бит', channels)
   } catch {
     alert('Не удалось открыть файл GB7')
   }
