@@ -21,6 +21,11 @@ export function decodeGb7(buffer: ArrayBuffer): Gb7Image {
   }
 
   const flags = bytes[5]
+
+  if ((flags & 0xfe) !== 0 || bytes[10] !== 0 || bytes[11] !== 0) {
+    throw new Error('Некорректный заголовок GB7')
+  }
+
   const hasMask = (flags & 0x01) !== 0
   const width = (bytes[6] << 8) | bytes[7]
   const height = (bytes[8] << 8) | bytes[9]
@@ -34,6 +39,11 @@ export function decodeGb7(buffer: ArrayBuffer): Gb7Image {
 
   for (let i = 0; i < pixelCount; i++) {
     const value = bytes[12 + i]
+
+    if (!hasMask && (value & 0x80) !== 0) {
+      throw new Error('Некорректные данные GB7')
+    }
+
     const gray = Math.round((value & 0x7f) * 255 / 127)
     const alpha = hasMask && (value & 0x80) === 0 ? 0 : 255
     const index = i * 4
