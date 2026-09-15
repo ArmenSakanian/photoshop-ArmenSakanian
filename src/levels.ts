@@ -3,6 +3,12 @@ import type { ChannelType } from './channels'
 export type LevelsChannel = 'master' | ChannelType
 export type HistogramScale = 'linear' | 'log'
 
+export type InputLevels = {
+  black: number
+  gamma: number
+  white: number
+}
+
 const channelNames: Record<LevelsChannel, string> = {
   master: 'Master',
   gray: 'Серый',
@@ -13,34 +19,108 @@ const channelNames: Record<LevelsChannel, string> = {
   mask: 'Маска',
 }
 
-function getValue(data: Uint8ClampedArray, index: number, channel: LevelsChannel) {
+function srgbToLinear(value: number) {
+  const normalized = value / 255
+
+  return normalized <= 0.04045
+    ? normalized / 12.92
+    : ((normalized + 0.055) / 1.055) ** 2.4
+}
+
+function getRelativeLuminance(data: Uint8ClampedArray, index: number, maxLevel: number) {
+  const red = srgbToLinear(data[index])
+  const green = srgbToLinear(data[index + 1])
+  const blue = srgbToLinear(data[index + 2])
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+  return Math.round(luminance * maxLevel)
+}
+
+function getChannelValue(data: Uint8ClampedArray, index: number, channel: LevelsChannel, maxLevel: number) {
   if (channel === 'master') {
-    return Math.round(
-      0.299 * data[index] +
-      0.587 * data[index + 1] +
-      0.114 * data[index + 2],
-    )
+    return getRelativeLuminance(data, index, maxLevel)
   }
 
   if (channel === 'red' || channel === 'gray') {
-    return data[index]
+    return Math.round(data[index] * maxLevel / 255)
   }
 
   if (channel === 'green') {
-    return data[index + 1]
+    return Math.round(data[index + 1] * maxLevel / 255)
   }
 
   if (channel === 'blue') {
-    return data[index + 2]
+    return Math.round(data[index + 2] * maxLevel / 255)
   }
 
-  return data[index + 3]
+  return Math.round(data[index + 3] * maxLevel / 255)
 }
 
-function toLevel(value: number, maxLevel: number) {
-  return maxLevel === 127
-    ? Math.round(value * 127 / 255)
-    : value
+function createLut(settings: InputLevels, maxLevel: number) {
+  const lut = new Uint8ClampedArray(maxLevel + 1)
+  const range = settings.white - settings.black
+
+  for (let value = 0; value <= maxLevel; value++) {
+    if (value <= settings.black) {
+      lut[value] = 0
+      continue
+    }
+
+    if (value >= settings.white) {
+      lut[value] = maxLevel
+      continue
+    }
+
+    const normalized = (value - settings.black) / range
+    lut[value] = Math.round(normalized ** settings.gamma * maxLevel)
+  }
+
+  return lut
+}
+
+function applyLut(value: number, lut: Uint8ClampedArray, maxLevel: number) {
+  const level = Math.round(value * maxLevel / 255)
+  return Math.round(lut[level] * 255 / maxLevel)
+}
+
+export function createDefaultInputLevels(maxLevel: number): InputLevels {
+  return {
+    black: 0,
+    gamma: 1,
+    white: maxLevel,
+  }
+}
+
+export function createLevelsSettings(channels: ChannelType[], maxLevel: number) {
+  const settings = new Map<LevelsChannel, InputLevels>()
+
+  settings.set('master', createDefaultInputLevels(maxLevel))
+
+  for (const channel of channels) {
+    settings.set(channel, createDefaultInputLevels(maxLevel))
+  }
+
+  return settings
+}
+
+export function gammaToMarkerPosition(settings: InputLevels) {
+  const range = settings.white - settings.black
+  const normalized = 0.5 ** (1 / settings.gamma)
+
+  return settings.black + normalized * range
+}
+
+export function markerPositionToGamma(position: number, black: number, white: number) {
+  const range = white - black
+
+  if (range <= 0) {
+    return 1
+  }
+
+  const normalized = Math.min(0.999999, Math.max(0.000001, (position - black) / range))
+  const gamma = Math.log(0.5) / Math.log(normalized)
+
+  return Math.min(9.9, Math.max(0.1, gamma))
 }
 
 export function renderLevelsChannels(select: HTMLSelectElement, channels: ChannelType[]) {
@@ -65,8 +145,7 @@ export function createHistogram(
   const data = imageData.data
 
   for (let index = 0; index < data.length; index += 4) {
-    const value = getValue(data, index, channel)
-    histogram[toLevel(value, maxLevel)]++
+    histogram[getChannelValue(data, index, channel, maxLevel)]++
   }
 
   return histogram
@@ -111,4 +190,70 @@ export function drawHistogram(
 
     context.fillRect(startX, height - barHeight, endX - startX, barHeight)
   }
+}
+
+export function createLevelsPreview(
+  imageData: ImageData,
+  channels: ChannelType[],
+  settings: Map<LevelsChannel, InputLevels>,
+  maxLevel: number,
+) {
+  const source = imageData.data
+  const pixels = new Uint8ClampedArray(source)
+  const master = settings.get('master') ?? createDefaultInputLevels(maxLevel)
+  const masterLut = createLut(master, maxLevel)
+  const channelLuts = new Map<ChannelType, Uint8ClampedArray>()
+
+  for (const channel of channels) {
+    const channelSettings = settings.get(channel)
+
+    if (channelSettings) {
+      channelLuts.set(channel, createLut(channelSettings, maxLevel))
+    }
+  }
+
+  for (let index = 0; index < source.length; index += 4) {
+    pixels[index] = applyLut(source[index], masterLut, maxLevel)
+    pixels[index + 1] = applyLut(source[index + 1], masterLut, maxLevel)
+    pixels[index + 2] = applyLut(source[index + 2], masterLut, maxLevel)
+
+    if (channels.includes('gray')) {
+      const grayLut = channelLuts.get('gray')
+
+      if (grayLut) {
+        const gray = applyLut(pixels[index], grayLut, maxLevel)
+        pixels[index] = gray
+        pixels[index + 1] = gray
+        pixels[index + 2] = gray
+      }
+    } else {
+      const redLut = channelLuts.get('red')
+      const greenLut = channelLuts.get('green')
+      const blueLut = channelLuts.get('blue')
+
+      if (redLut) {
+        pixels[index] = applyLut(pixels[index], redLut, maxLevel)
+      }
+
+      if (greenLut) {
+        pixels[index + 1] = applyLut(pixels[index + 1], greenLut, maxLevel)
+      }
+
+      if (blueLut) {
+        pixels[index + 2] = applyLut(pixels[index + 2], blueLut, maxLevel)
+      }
+    }
+
+    const alphaChannel = channels.includes('alpha') ? 'alpha' : channels.includes('mask') ? 'mask' : null
+
+    if (alphaChannel) {
+      const alphaLut = channelLuts.get(alphaChannel)
+
+      if (alphaLut) {
+        pixels[index + 3] = applyLut(pixels[index + 3], alphaLut, maxLevel)
+      }
+    }
+  }
+
+  return new ImageData(pixels, imageData.width, imageData.height)
 }

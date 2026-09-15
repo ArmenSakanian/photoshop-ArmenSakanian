@@ -435,6 +435,23 @@ select {
 
 .histogram-block {
   min-width: 0;
+  padding: 12px;
+  background: #252525;
+  border: 1px solid #444444;
+  border-radius: 5px;
+}
+
+.levels-input-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #cfcfcf;
+}
+
+.levels-graph {
+  overflow: hidden;
+  background: #1c1c1c;
+  border: 1px solid #4a4a4a;
+  border-radius: 3px;
 }
 
 .histogram-canvas {
@@ -442,15 +459,158 @@ select {
   width: 100%;
   height: 220px;
   background: #1c1c1c;
-  border: 1px solid #4a4a4a;
+}
+
+.levels-marker-track {
+  position: relative;
+  height: 30px;
+  border-top: 1px solid #393939;
+  background: #202020;
+}
+
+.levels-marker-track::before {
+  position: absolute;
+  top: 14px;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  content: '';
+  background: #5d5d5d;
+}
+
+.levels-marker {
+  position: absolute;
+  inset: 0 8px;
+  width: calc(100% - 16px);
+  height: 30px;
+  margin: 0;
+  pointer-events: none;
+  appearance: none;
+  background: transparent;
+}
+
+.levels-marker::-webkit-slider-runnable-track {
+  height: 1px;
+  background: transparent;
+}
+
+.levels-marker::-webkit-slider-thumb {
+  width: 13px;
+  height: 17px;
+  margin-top: -8px;
+  pointer-events: auto;
+  cursor: ew-resize;
+  appearance: none;
+  background: #dddddd;
+  border: 1px solid #171717;
+  border-radius: 2px;
+  clip-path: polygon(50% 0, 100% 42%, 100% 100%, 0 100%, 0 42%);
+}
+
+.levels-marker::-moz-range-track {
+  height: 1px;
+  background: transparent;
+}
+
+.levels-marker::-moz-range-thumb {
+  width: 13px;
+  height: 17px;
+  pointer-events: auto;
+  cursor: ew-resize;
+  background: #dddddd;
+  border: 1px solid #171717;
+  border-radius: 2px;
+}
+
+.levels-marker-black::-webkit-slider-thumb {
+  background: #202020;
+  border-color: #bdbdbd;
+}
+
+.levels-marker-black::-moz-range-thumb {
+  background: #202020;
+  border-color: #bdbdbd;
+}
+
+.levels-marker-gamma::-webkit-slider-thumb {
+  background: #888888;
+}
+
+.levels-marker-gamma::-moz-range-thumb {
+  background: #888888;
+}
+
+.levels-marker-white::-webkit-slider-thumb {
+  background: #eeeeee;
+}
+
+.levels-marker-white::-moz-range-thumb {
+  background: #eeeeee;
+}
+
+.levels-input-values {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.levels-input-values label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: #a9a9a9;
+}
+
+.levels-input-values label:nth-child(2) {
+  align-items: center;
+  text-align: center;
+}
+
+.levels-input-values label:nth-child(3) {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.levels-input-values input {
+  width: 82px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 6px 7px;
+  color: #eeeeee;
+  text-align: center;
+  background: #343434;
+  border: 1px solid #505050;
+  border-radius: 4px;
+}
+
+.levels-input-values input:focus {
+  border-color: #777777;
+  outline: none;
 }
 
 .histogram-axis {
   display: flex;
   justify-content: space-between;
-  margin-top: 5px;
-  font-size: 12px;
-  color: #a9a9a9;
+  margin-top: 6px;
+  padding: 0 1px;
+  font-size: 11px;
+  color: #858585;
+}
+
+.levels-preview-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #dddddd;
+  cursor: pointer;
+}
+
+.levels-preview-option input {
+  margin: 0;
 }
 
 @media (max-width: 520px) {
@@ -464,5 +624,17 @@ select {
 
   .histogram-canvas {
     height: 170px;
+  }
+
+  .histogram-block {
+    padding: 9px;
+  }
+
+  .levels-input-values {
+    gap: 6px;
+  }
+
+  .levels-input-values input {
+    width: 72px;
   }
 }

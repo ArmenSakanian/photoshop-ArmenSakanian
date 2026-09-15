@@ -4,7 +4,18 @@ import { getImageInfo } from './image-info'
 import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
-import { createHistogram, drawHistogram, renderLevelsChannels, type HistogramScale, type LevelsChannel } from './levels'
+import {
+  createHistogram,
+  createLevelsPreview,
+  createLevelsSettings,
+  drawHistogram,
+  gammaToMarkerPosition,
+  markerPositionToGamma,
+  renderLevelsChannels,
+  type HistogramScale,
+  type InputLevels,
+  type LevelsChannel,
+} from './levels'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -36,11 +47,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           title="Уровни"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 19V12"></path>
-            <path d="M10 19V7"></path>
-            <path d="M16 19V10"></path>
-            <path d="M22 19V4"></path>
-            <path d="M2 19H22"></path>
+            <path d="M3 19H21"></path>
+            <path d="M4 17V14H6V11H8V13H10V8H12V10H14V6H16V12H18V9H20V17"></path>
           </svg>
         </button>
         <select id="saveFormat" aria-label="Формат сохранения">
@@ -103,11 +111,37 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </label>
         </div>
         <div class="histogram-block">
-          <canvas id="histogramCanvas" class="histogram-canvas" width="512" height="220"></canvas>
+          <div class="levels-input-title">Входные уровни</div>
+          <div class="levels-graph">
+            <canvas id="histogramCanvas" class="histogram-canvas" width="512" height="220"></canvas>
+            <div class="levels-marker-track">
+              <input id="levelsBlackMarker" class="levels-marker levels-marker-black" type="range" min="0" max="255" value="0" aria-label="Точка черного" />
+              <input id="levelsGammaMarker" class="levels-marker levels-marker-gamma" type="range" min="0" max="255" value="128" aria-label="Полутона" />
+              <input id="levelsWhiteMarker" class="levels-marker levels-marker-white" type="range" min="0" max="255" value="255" aria-label="Точка белого" />
+            </div>
+          </div>
+          <div class="levels-input-values">
+            <label>
+              <span>Черный</span>
+              <input id="levelsBlackValue" type="number" min="0" max="254" value="0" />
+            </label>
+            <label>
+              <span>Гамма</span>
+              <input id="levelsGammaValue" type="number" min="0.1" max="9.9" step="0.1" value="1.0" />
+            </label>
+            <label>
+              <span>Белый</span>
+              <input id="levelsWhiteValue" type="number" min="1" max="255" value="255" />
+            </label>
+          </div>
           <div class="histogram-axis">
             <span>0</span>
             <span id="histogramMax">255</span>
           </div>
+          <label class="levels-preview-option">
+            <input id="levelsPreview" type="checkbox" checked />
+            <span>Предпросмотр</span>
+          </label>
         </div>
       </div>
     </dialog>
@@ -157,6 +191,13 @@ const levelsChannel = document.querySelector<HTMLSelectElement>('#levelsChannel'
 const histogramScale = document.querySelector<HTMLSelectElement>('#histogramScale')!
 const histogramCanvas = document.querySelector<HTMLCanvasElement>('#histogramCanvas')!
 const histogramMax = document.querySelector<HTMLSpanElement>('#histogramMax')!
+const levelsBlackMarker = document.querySelector<HTMLInputElement>('#levelsBlackMarker')!
+const levelsGammaMarker = document.querySelector<HTMLInputElement>('#levelsGammaMarker')!
+const levelsWhiteMarker = document.querySelector<HTMLInputElement>('#levelsWhiteMarker')!
+const levelsBlackValue = document.querySelector<HTMLInputElement>('#levelsBlackValue')!
+const levelsGammaValue = document.querySelector<HTMLInputElement>('#levelsGammaValue')!
+const levelsWhiteValue = document.querySelector<HTMLInputElement>('#levelsWhiteValue')!
+const levelsPreview = document.querySelector<HTMLInputElement>('#levelsPreview')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
@@ -166,6 +207,8 @@ let activeChannels = new Set<ChannelType>()
 let pipetteActive = false
 let pipetteDragging = false
 let currentLevelsMax = 255
+let levelsSettings = new Map<LevelsChannel, InputLevels>()
+let levelsPreviewFrame = 0
 
 function formatLabValue(value: number) {
   return Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)
@@ -251,6 +294,112 @@ function updateLevelsHistogram() {
   )
 }
 
+function getCurrentLevelsSettings() {
+  return levelsSettings.get(levelsChannel.value as LevelsChannel)
+}
+
+function updateLevelsInputs() {
+  const settings = getCurrentLevelsSettings()
+
+  if (!settings) {
+    return
+  }
+
+  const gammaPosition = gammaToMarkerPosition(settings)
+
+  levelsBlackMarker.max = String(currentLevelsMax)
+  levelsGammaMarker.max = String(currentLevelsMax)
+  levelsWhiteMarker.max = String(currentLevelsMax)
+  levelsBlackMarker.value = String(settings.black)
+  levelsGammaMarker.value = String(Math.round(gammaPosition))
+  levelsWhiteMarker.value = String(settings.white)
+
+  levelsBlackValue.max = String(Math.max(0, settings.white - 1))
+  levelsWhiteValue.min = String(Math.min(currentLevelsMax, settings.black + 1))
+  levelsWhiteValue.max = String(currentLevelsMax)
+  levelsBlackValue.value = String(settings.black)
+  levelsGammaValue.value = settings.gamma.toFixed(2)
+  levelsWhiteValue.value = String(settings.white)
+}
+
+function renderLevelsPreview() {
+  if (!currentImageData) {
+    return
+  }
+
+  if (!levelsPreview.checked) {
+    renderCurrentImage()
+    return
+  }
+
+  const preview = createLevelsPreview(
+    currentImageData,
+    currentChannels,
+    levelsSettings,
+    currentLevelsMax,
+  )
+  const visiblePreview = createChannelView(preview, currentChannels, activeChannels)
+
+  context.putImageData(visiblePreview, 0, 0)
+}
+
+function scheduleLevelsPreview() {
+  cancelAnimationFrame(levelsPreviewFrame)
+  levelsPreviewFrame = requestAnimationFrame(renderLevelsPreview)
+}
+
+function changeBlackPoint(value: number) {
+  const settings = getCurrentLevelsSettings()
+
+  if (!settings) {
+    return
+  }
+
+  settings.black = Math.max(0, Math.min(Math.round(value), settings.white - 1))
+  updateLevelsInputs()
+  scheduleLevelsPreview()
+}
+
+function changeWhitePoint(value: number) {
+  const settings = getCurrentLevelsSettings()
+
+  if (!settings) {
+    return
+  }
+
+  settings.white = Math.min(currentLevelsMax, Math.max(Math.round(value), settings.black + 1))
+  updateLevelsInputs()
+  scheduleLevelsPreview()
+}
+
+function changeGamma(value: number) {
+  const settings = getCurrentLevelsSettings()
+
+  if (!settings) {
+    return
+  }
+
+  settings.gamma = Math.min(9.9, Math.max(0.1, value))
+  updateLevelsInputs()
+  scheduleLevelsPreview()
+}
+
+function changeGammaMarker(position: number) {
+  const settings = getCurrentLevelsSettings()
+
+  if (!settings) {
+    return
+  }
+
+  const minPosition = settings.black + 0.001
+  const maxPosition = settings.white - 0.001
+  const safePosition = Math.min(maxPosition, Math.max(minPosition, position))
+
+  settings.gamma = markerPositionToGamma(safePosition, settings.black, settings.white)
+  updateLevelsInputs()
+  scheduleLevelsPreview()
+}
+
 function openLevels() {
   if (!currentImageData) {
     return
@@ -258,10 +407,13 @@ function openLevels() {
 
   setPipetteActive(false)
   renderLevelsChannels(levelsChannel, currentChannels)
+  levelsSettings = createLevelsSettings(currentChannels, currentLevelsMax)
   levelsChannel.value = 'master'
   histogramScale.value = 'linear'
+  levelsPreview.checked = true
   histogramMax.textContent = String(currentLevelsMax)
   updateLevelsHistogram()
+  updateLevelsInputs()
   levelsDialog.showModal()
 }
 
@@ -427,8 +579,22 @@ pipetteButton.addEventListener('click', () => {
 
 levelsButton.addEventListener('click', openLevels)
 levelsCloseButton.addEventListener('click', () => levelsDialog.close())
-levelsChannel.addEventListener('change', updateLevelsHistogram)
+levelsDialog.addEventListener('close', () => {
+  cancelAnimationFrame(levelsPreviewFrame)
+  renderCurrentImage()
+})
+levelsChannel.addEventListener('change', () => {
+  updateLevelsHistogram()
+  updateLevelsInputs()
+})
 histogramScale.addEventListener('change', updateLevelsHistogram)
+levelsBlackMarker.addEventListener('input', () => changeBlackPoint(Number(levelsBlackMarker.value)))
+levelsWhiteMarker.addEventListener('input', () => changeWhitePoint(Number(levelsWhiteMarker.value)))
+levelsGammaMarker.addEventListener('input', () => changeGammaMarker(Number(levelsGammaMarker.value)))
+levelsBlackValue.addEventListener('change', () => changeBlackPoint(Number(levelsBlackValue.value)))
+levelsWhiteValue.addEventListener('change', () => changeWhitePoint(Number(levelsWhiteValue.value)))
+levelsGammaValue.addEventListener('change', () => changeGamma(Number(levelsGammaValue.value)))
+levelsPreview.addEventListener('change', scheduleLevelsPreview)
 
 canvas.addEventListener('pointerdown', (event) => {
   if (!pipetteActive || !currentImageData || event.button !== 0) {
