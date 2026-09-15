@@ -2,6 +2,7 @@ import './style.css'
 import { decodeGb7, encodeGb7 } from './gb7'
 import { getImageInfo } from './image-info'
 import { createChannelView, renderChannels, type ChannelType } from './channels'
+import { getPixelPosition, getPixelRgb } from './pipette'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -9,6 +10,21 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="toolbar-title">Photoshop</div>
       <div class="toolbar-actions">
         <button id="openButton" type="button">Открыть</button>
+        <button
+          id="pipetteButton"
+          class="tool-button"
+          type="button"
+          disabled
+          aria-label="Пипетка"
+          aria-pressed="false"
+          title="Пипетка"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 4 20 9 18 11 13 6 15 4Z"></path>
+            <path d="M13.5 7.5 6.5 14.5 5 19 9.5 17.5 16.5 10.5"></path>
+            <path d="M6.5 14.5 9.5 17.5"></path>
+          </svg>
+        </button>
         <select id="saveFormat" aria-label="Формат сохранения">
           <option value="png">PNG</option>
           <option value="jpg">JPG</option>
@@ -28,8 +44,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <aside id="channelsPanel" class="channels-panel" hidden>
         <div class="channels-title">Каналы</div>
         <div id="channelsList" class="channels-list"></div>
+        <div class="pipette-info">
+          <div class="pipette-info-title">Пипетка</div>
+          <div class="pipette-values">
+            <span id="pipetteX">X: -</span>
+            <span id="pipetteY">Y: -</span>
+            <span id="pipetteR">R: -</span>
+            <span id="pipetteG">G: -</span>
+            <span id="pipetteB">B: -</span>
+            <span id="pipetteColor" class="pipette-color" aria-label="Выбранный цвет"></span>
+          </div>
+        </div>
       </aside>
     </main>
+
+    <div id="pipettePreview" class="pipette-preview" hidden>
+      <span id="pipettePreviewColor" class="pipette-preview-color"></span>
+    </div>
 
     <footer class="statusbar">
       <span id="imageWidth">Ширина: 0 px</span>
@@ -48,6 +79,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
 const openButton = document.querySelector<HTMLButtonElement>('#openButton')!
 const saveButton = document.querySelector<HTMLButtonElement>('#saveButton')!
+const pipetteButton = document.querySelector<HTMLButtonElement>('#pipetteButton')!
 const saveFormat = document.querySelector<HTMLSelectElement>('#saveFormat')!
 const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas')!
@@ -57,12 +89,77 @@ const imageHeight = document.querySelector<HTMLSpanElement>('#imageHeight')!
 const colorDepth = document.querySelector<HTMLSpanElement>('#colorDepth')!
 const channelsPanel = document.querySelector<HTMLElement>('#channelsPanel')!
 const channelsList = document.querySelector<HTMLDivElement>('#channelsList')!
+const pipetteX = document.querySelector<HTMLSpanElement>('#pipetteX')!
+const pipetteY = document.querySelector<HTMLSpanElement>('#pipetteY')!
+const pipetteR = document.querySelector<HTMLSpanElement>('#pipetteR')!
+const pipetteG = document.querySelector<HTMLSpanElement>('#pipetteG')!
+const pipetteB = document.querySelector<HTMLSpanElement>('#pipetteB')!
+const pipetteColor = document.querySelector<HTMLSpanElement>('#pipetteColor')!
+const pipettePreview = document.querySelector<HTMLDivElement>('#pipettePreview')!
+const pipettePreviewColor = document.querySelector<HTMLSpanElement>('#pipettePreviewColor')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
 let currentImageData: ImageData | null = null
 let currentChannels: ChannelType[] = []
 let activeChannels = new Set<ChannelType>()
+let pipetteActive = false
+let pipetteDragging = false
+
+function resetPipetteInfo() {
+  pipetteX.textContent = 'X: -'
+  pipetteY.textContent = 'Y: -'
+  pipetteR.textContent = 'R: -'
+  pipetteG.textContent = 'G: -'
+  pipetteB.textContent = 'B: -'
+  pipetteColor.style.background = 'transparent'
+}
+
+function hidePipettePreview() {
+  pipettePreview.hidden = true
+}
+
+function setPipetteActive(active: boolean) {
+  pipetteActive = active
+  pipetteDragging = false
+  pipetteButton.classList.toggle('active', active)
+  pipetteButton.setAttribute('aria-pressed', String(active))
+  canvas.classList.toggle('pipette-active', active)
+  hidePipettePreview()
+}
+
+function sampleColor(event: MouseEvent, showPreview: boolean) {
+  if (!currentImageData) {
+    return
+  }
+
+  const position = getPixelPosition(event, canvas)
+
+  if (!position) {
+    hidePipettePreview()
+    return
+  }
+
+  const color = getPixelRgb(currentImageData, position)
+  const rgb = `rgb(${color.r}, ${color.g}, ${color.b})`
+
+  pipetteX.textContent = `X: ${position.x}`
+  pipetteY.textContent = `Y: ${position.y}`
+  pipetteR.textContent = `R: ${color.r}`
+  pipetteG.textContent = `G: ${color.g}`
+  pipetteB.textContent = `B: ${color.b}`
+  pipetteColor.style.background = rgb
+
+  if (showPreview) {
+    const previewX = Math.min(Math.max(event.clientX + 16, 8), window.innerWidth - 46)
+    const previewY = Math.min(Math.max(event.clientY + 16, 8), window.innerHeight - 46)
+
+    pipettePreviewColor.style.background = rgb
+    pipettePreview.style.left = `${previewX}px`
+    pipettePreview.style.top = `${previewY}px`
+    pipettePreview.hidden = false
+  }
+}
 
 function renderCurrentImage() {
   if (!currentImageData) {
@@ -78,6 +175,8 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
   canvas.hidden = false
   channelsPanel.hidden = false
   saveButton.disabled = false
+  pipetteButton.disabled = false
+  resetPipetteInfo()
   imageWidth.textContent = `Ширина: ${width} px`
   imageHeight.textContent = `Высота: ${height} px`
   colorDepth.textContent = `Глубина цвета: ${depth}`
@@ -210,6 +309,55 @@ function saveGb7() {
 
 openButton.addEventListener('click', () => {
   fileInput.click()
+})
+
+pipetteButton.addEventListener('click', () => {
+  if (!currentImageData) {
+    return
+  }
+
+  setPipetteActive(!pipetteActive)
+})
+
+canvas.addEventListener('pointerdown', (event) => {
+  if (!pipetteActive || !currentImageData || event.button !== 0) {
+    return
+  }
+
+  pipetteDragging = true
+  canvas.setPointerCapture(event.pointerId)
+  sampleColor(event, true)
+})
+
+canvas.addEventListener('pointermove', (event) => {
+  if (!pipetteActive || !pipetteDragging) {
+    return
+  }
+
+  sampleColor(event, true)
+})
+
+canvas.addEventListener('pointerup', (event) => {
+  if (!pipetteDragging || event.button !== 0) {
+    return
+  }
+
+  sampleColor(event, false)
+  pipetteDragging = false
+  hidePipettePreview()
+
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId)
+  }
+})
+
+canvas.addEventListener('pointercancel', (event) => {
+  pipetteDragging = false
+  hidePipettePreview()
+
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId)
+  }
 })
 
 saveButton.addEventListener('click', () => {
