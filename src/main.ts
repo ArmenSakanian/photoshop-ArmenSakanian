@@ -3,6 +3,7 @@ import { decodeGb7, encodeGb7 } from './gb7'
 import { getImageInfo } from './image-info'
 import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
+import { rgbToLab } from './color'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -52,6 +53,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <span id="pipetteR">R: -</span>
             <span id="pipetteG">G: -</span>
             <span id="pipetteB">B: -</span>
+            <span id="pipetteL">L*: -</span>
+            <span id="pipetteA">a*: -</span>
+            <span id="pipetteLabB">b*: -</span>
             <span id="pipetteColor" class="pipette-color" aria-label="Выбранный цвет"></span>
           </div>
         </div>
@@ -94,6 +98,9 @@ const pipetteY = document.querySelector<HTMLSpanElement>('#pipetteY')!
 const pipetteR = document.querySelector<HTMLSpanElement>('#pipetteR')!
 const pipetteG = document.querySelector<HTMLSpanElement>('#pipetteG')!
 const pipetteB = document.querySelector<HTMLSpanElement>('#pipetteB')!
+const pipetteL = document.querySelector<HTMLSpanElement>('#pipetteL')!
+const pipetteA = document.querySelector<HTMLSpanElement>('#pipetteA')!
+const pipetteLabB = document.querySelector<HTMLSpanElement>('#pipetteLabB')!
 const pipetteColor = document.querySelector<HTMLSpanElement>('#pipetteColor')!
 const pipettePreview = document.querySelector<HTMLDivElement>('#pipettePreview')!
 const pipettePreviewColor = document.querySelector<HTMLSpanElement>('#pipettePreviewColor')!
@@ -106,12 +113,19 @@ let activeChannels = new Set<ChannelType>()
 let pipetteActive = false
 let pipetteDragging = false
 
+function formatLabValue(value: number) {
+  return Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)
+}
+
 function resetPipetteInfo() {
   pipetteX.textContent = 'X: -'
   pipetteY.textContent = 'Y: -'
   pipetteR.textContent = 'R: -'
   pipetteG.textContent = 'G: -'
   pipetteB.textContent = 'B: -'
+  pipetteL.textContent = 'L*: -'
+  pipetteA.textContent = 'a*: -'
+  pipetteLabB.textContent = 'b*: -'
   pipetteColor.style.background = 'transparent'
 }
 
@@ -141,6 +155,7 @@ function sampleColor(event: MouseEvent, showPreview: boolean) {
   }
 
   const color = getPixelRgb(currentImageData, position)
+  const lab = rgbToLab(color.r, color.g, color.b)
   const rgb = `rgb(${color.r}, ${color.g}, ${color.b})`
 
   pipetteX.textContent = `X: ${position.x}`
@@ -148,6 +163,9 @@ function sampleColor(event: MouseEvent, showPreview: boolean) {
   pipetteR.textContent = `R: ${color.r}`
   pipetteG.textContent = `G: ${color.g}`
   pipetteB.textContent = `B: ${color.b}`
+  pipetteL.textContent = `L*: ${formatLabValue(lab.l)}`
+  pipetteA.textContent = `a*: ${formatLabValue(lab.a)}`
+  pipetteLabB.textContent = `b*: ${formatLabValue(lab.b)}`
   pipetteColor.style.background = rgb
 
   if (showPreview) {
