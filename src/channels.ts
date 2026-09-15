@@ -62,18 +62,68 @@ function createPreview(imageData: ImageData, channel: ChannelType) {
   return preview
 }
 
-export function renderChannels(container: HTMLElement, imageData: ImageData, channels: ChannelType[]) {
+export function createChannelView(imageData: ImageData, channels: ChannelType[], activeChannels: Set<ChannelType>) {
+  const source = imageData.data
+  const pixels = new Uint8ClampedArray(source.length)
+  const hasGray = channels.includes('gray')
+  const alphaChannel = channels.includes('alpha') ? 'alpha' : channels.includes('mask') ? 'mask' : null
+  const onlyAlpha = Boolean(alphaChannel && activeChannels.size === 1 && activeChannels.has(alphaChannel))
+
+  for (let index = 0; index < source.length; index += 4) {
+    if (onlyAlpha) {
+      const alpha = source[index + 3]
+      pixels[index] = alpha
+      pixels[index + 1] = alpha
+      pixels[index + 2] = alpha
+      pixels[index + 3] = 255
+      continue
+    }
+
+    if (hasGray) {
+      const gray = activeChannels.has('gray') ? source[index] : 0
+      pixels[index] = gray
+      pixels[index + 1] = gray
+      pixels[index + 2] = gray
+    } else {
+      pixels[index] = activeChannels.has('red') ? source[index] : 0
+      pixels[index + 1] = activeChannels.has('green') ? source[index + 1] : 0
+      pixels[index + 2] = activeChannels.has('blue') ? source[index + 2] : 0
+    }
+
+    pixels[index + 3] = alphaChannel && activeChannels.has(alphaChannel) ? source[index + 3] : 255
+  }
+
+  return new ImageData(pixels, imageData.width, imageData.height)
+}
+
+export function renderChannels(
+  container: HTMLElement,
+  imageData: ImageData,
+  channels: ChannelType[],
+  activeChannels: Set<ChannelType>,
+  onToggle: (channel: ChannelType, active: boolean) => void,
+) {
   container.replaceChildren()
 
   for (const channel of channels) {
-    const item = document.createElement('div')
+    const item = document.createElement('button')
     const preview = createPreview(imageData, channel)
     const name = document.createElement('span')
+    const active = activeChannels.has(channel)
 
-    item.className = 'channel-item'
+    item.type = 'button'
+    item.className = `channel-item${active ? ' active' : ''}`
+    item.setAttribute('aria-pressed', String(active))
     preview.className = 'channel-preview'
     name.className = 'channel-name'
     name.textContent = channelNames[channel]
+
+    item.addEventListener('click', () => {
+      const nextActive = item.getAttribute('aria-pressed') !== 'true'
+      item.setAttribute('aria-pressed', String(nextActive))
+      item.classList.toggle('active', nextActive)
+      onToggle(channel, nextActive)
+    })
 
     item.append(preview, name)
     container.append(item)

@@ -1,7 +1,7 @@
 import './style.css'
 import { decodeGb7, encodeGb7 } from './gb7'
 import { getImageInfo } from './image-info'
-import { renderChannels, type ChannelType } from './channels'
+import { createChannelView, renderChannels, type ChannelType } from './channels'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -61,6 +61,17 @@ const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
 let currentImageData: ImageData | null = null
+let currentChannels: ChannelType[] = []
+let activeChannels = new Set<ChannelType>()
+
+function renderCurrentImage() {
+  if (!currentImageData) {
+    return
+  }
+
+  const visibleImage = createChannelView(currentImageData, currentChannels, activeChannels)
+  context.putImageData(visibleImage, 0, 0)
+}
 
 function showCanvas(width: number, height: number, depth: string, channels: ChannelType[]) {
   emptyState.hidden = true
@@ -70,9 +81,20 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
   imageWidth.textContent = `Ширина: ${width} px`
   imageHeight.textContent = `Высота: ${height} px`
   colorDepth.textContent = `Глубина цвета: ${depth}`
+  currentChannels = channels
+  activeChannels = new Set(channels)
 
   if (currentImageData) {
-    renderChannels(channelsList, currentImageData, channels)
+    renderCurrentImage()
+    renderChannels(channelsList, currentImageData, channels, activeChannels, (channel, active) => {
+      if (active) {
+        activeChannels.add(channel)
+      } else {
+        activeChannels.delete(channel)
+      }
+
+      renderCurrentImage()
+    })
   }
 }
 
@@ -136,18 +158,29 @@ function downloadBlob(blob: Blob, fileName: string) {
 }
 
 function saveCanvasImage(format: 'png' | 'jpg' | 'jpeg') {
+  if (!currentImageData) {
+    return
+  }
+
   const mimeType = format === 'png' ? 'image/png' : 'image/jpeg'
-  let exportCanvas = canvas
+  const sourceCanvas = document.createElement('canvas')
+  const sourceContext = sourceCanvas.getContext('2d')!
+
+  sourceCanvas.width = currentImageData.width
+  sourceCanvas.height = currentImageData.height
+  sourceContext.putImageData(currentImageData, 0, 0)
+
+  let exportCanvas = sourceCanvas
 
   if (mimeType === 'image/jpeg') {
     exportCanvas = document.createElement('canvas')
-    exportCanvas.width = canvas.width
-    exportCanvas.height = canvas.height
+    exportCanvas.width = sourceCanvas.width
+    exportCanvas.height = sourceCanvas.height
 
     const exportContext = exportCanvas.getContext('2d')!
     exportContext.fillStyle = '#ffffff'
     exportContext.fillRect(0, 0, exportCanvas.width, exportCanvas.height)
-    exportContext.drawImage(canvas, 0, 0)
+    exportContext.drawImage(sourceCanvas, 0, 0)
   }
 
   exportCanvas.toBlob((blob) => {
@@ -161,9 +194,12 @@ function saveCanvasImage(format: 'png' | 'jpg' | 'jpeg') {
 }
 
 function saveGb7() {
+  if (!currentImageData) {
+    return
+  }
+
   try {
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-    const bytes = encodeGb7(imageData)
+    const bytes = encodeGb7(currentImageData)
     const blob = new Blob([bytes], { type: 'application/octet-stream' })
 
     downloadBlob(blob, `${currentFileName}.gb7`)

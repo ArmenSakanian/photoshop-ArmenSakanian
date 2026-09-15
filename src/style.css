@@ -244,3 +244,22 @@ select {
     flex: 0 0 auto;
   }
 }
+
+.channel-item {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.48;
+}
+
+.channel-item.active {
+  opacity: 1;
+  border-color: #777777;
+  background: #3d3d3d;
+}
+
+.channel-item:hover {
+  background: #414141;
+}
