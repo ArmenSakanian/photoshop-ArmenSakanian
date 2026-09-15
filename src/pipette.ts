@@ -25,11 +25,11 @@ export function getPixelPosition(event: MouseEvent, canvas: HTMLCanvasElement): 
 
   const x = Math.min(
     canvas.width - 1,
-    Math.max(0, Math.round(localX * (canvas.width - 1) / Math.max(rect.width - 1, 1))),
+    Math.max(0, Math.floor(localX * canvas.width / rect.width)),
   )
   const y = Math.min(
     canvas.height - 1,
-    Math.max(0, Math.round(localY * (canvas.height - 1) / Math.max(rect.height - 1, 1))),
+    Math.max(0, Math.floor(localY * canvas.height / rect.height)),
   )
 
   return { x, y }

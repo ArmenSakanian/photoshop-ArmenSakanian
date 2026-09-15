@@ -46,11 +46,19 @@ function getPngInfo(bytes: Uint8Array): ImageInfo {
   const colorType = bytes[25]
 
   if (colorType === 0) {
-    return { depth: `${bitDepth} бит`, channels: ['gray'] }
+    const channels: ChannelType[] = hasPngTransparency(bytes)
+      ? ['gray', 'alpha']
+      : ['gray']
+
+    return { depth: `${bitDepth} бит`, channels }
   }
 
   if (colorType === 2) {
-    return { depth: `${bitDepth * 3} бит`, channels: ['red', 'green', 'blue'] }
+    const channels: ChannelType[] = hasPngTransparency(bytes)
+      ? ['red', 'green', 'blue', 'alpha']
+      : ['red', 'green', 'blue']
+
+    return { depth: `${bitDepth * 3} бит`, channels }
   }
 
   if (colorType === 3) {
