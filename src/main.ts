@@ -143,6 +143,13 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <span>Предпросмотр</span>
           </label>
         </div>
+        <div class="levels-actions">
+          <button id="levelsResetButton" class="levels-action levels-reset" type="button">Сброс</button>
+          <div class="levels-action-group">
+            <button id="levelsCancelButton" class="levels-action" type="button">Отмена</button>
+            <button id="levelsApplyButton" class="levels-action levels-apply" type="button">Применить</button>
+          </div>
+        </div>
       </div>
     </dialog>
 
@@ -198,6 +205,9 @@ const levelsBlackValue = document.querySelector<HTMLInputElement>('#levelsBlackV
 const levelsGammaValue = document.querySelector<HTMLInputElement>('#levelsGammaValue')!
 const levelsWhiteValue = document.querySelector<HTMLInputElement>('#levelsWhiteValue')!
 const levelsPreview = document.querySelector<HTMLInputElement>('#levelsPreview')!
+const levelsResetButton = document.querySelector<HTMLButtonElement>('#levelsResetButton')!
+const levelsCancelButton = document.querySelector<HTMLButtonElement>('#levelsCancelButton')!
+const levelsApplyButton = document.querySelector<HTMLButtonElement>('#levelsApplyButton')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
@@ -417,6 +427,30 @@ function openLevels() {
   levelsDialog.showModal()
 }
 
+function resetLevels() {
+  levelsSettings = createLevelsSettings(currentChannels, currentLevelsMax)
+  updateLevelsInputs()
+  scheduleLevelsPreview()
+}
+
+function applyLevels() {
+  if (!currentImageData) {
+    return
+  }
+
+  cancelAnimationFrame(levelsPreviewFrame)
+  currentImageData = createLevelsPreview(
+    currentImageData,
+    currentChannels,
+    levelsSettings,
+    currentLevelsMax,
+  )
+  resetPipetteInfo()
+  renderCurrentImage()
+  renderChannelsPanel()
+  levelsDialog.close()
+}
+
 function renderCurrentImage() {
   if (!currentImageData) {
     return
@@ -424,6 +458,22 @@ function renderCurrentImage() {
 
   const visibleImage = createChannelView(currentImageData, currentChannels, activeChannels)
   context.putImageData(visibleImage, 0, 0)
+}
+
+function renderChannelsPanel() {
+  if (!currentImageData) {
+    return
+  }
+
+  renderChannels(channelsList, currentImageData, currentChannels, activeChannels, (channel, active) => {
+    if (active) {
+      activeChannels.add(channel)
+    } else {
+      activeChannels.delete(channel)
+    }
+
+    renderCurrentImage()
+  })
 }
 
 function showCanvas(width: number, height: number, depth: string, channels: ChannelType[], levelsMax = 255) {
@@ -443,15 +493,7 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
 
   if (currentImageData) {
     renderCurrentImage()
-    renderChannels(channelsList, currentImageData, channels, activeChannels, (channel, active) => {
-      if (active) {
-        activeChannels.add(channel)
-      } else {
-        activeChannels.delete(channel)
-      }
-
-      renderCurrentImage()
-    })
+    renderChannelsPanel()
   }
 }
 
@@ -579,6 +621,9 @@ pipetteButton.addEventListener('click', () => {
 
 levelsButton.addEventListener('click', openLevels)
 levelsCloseButton.addEventListener('click', () => levelsDialog.close())
+levelsCancelButton.addEventListener('click', () => levelsDialog.close())
+levelsResetButton.addEventListener('click', resetLevels)
+levelsApplyButton.addEventListener('click', applyLevels)
 levelsDialog.addEventListener('close', () => {
   cancelAnimationFrame(levelsPreviewFrame)
   renderCurrentImage()
