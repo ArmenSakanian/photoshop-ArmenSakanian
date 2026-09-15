@@ -4,6 +4,7 @@ import { getImageInfo } from './image-info'
 import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
+import { createHistogram, drawHistogram, renderLevelsChannels, type HistogramScale, type LevelsChannel } from './levels'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div class="editor">
@@ -24,6 +25,22 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <path d="M15 4 20 9 18 11 13 6 15 4Z"></path>
             <path d="M13.5 7.5 6.5 14.5 5 19 9.5 17.5 16.5 10.5"></path>
             <path d="M6.5 14.5 9.5 17.5"></path>
+          </svg>
+        </button>
+        <button
+          id="levelsButton"
+          class="tool-button"
+          type="button"
+          disabled
+          aria-label="Уровни"
+          title="Уровни"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 19V12"></path>
+            <path d="M10 19V7"></path>
+            <path d="M16 19V10"></path>
+            <path d="M22 19V4"></path>
+            <path d="M2 19H22"></path>
           </svg>
         </button>
         <select id="saveFormat" aria-label="Формат сохранения">
@@ -66,6 +83,35 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <span id="pipettePreviewColor" class="pipette-preview-color"></span>
     </div>
 
+    <dialog id="levelsDialog" class="levels-dialog">
+      <div class="levels-window">
+        <div class="levels-header">
+          <div class="levels-title">Уровни</div>
+          <button id="levelsCloseButton" class="levels-close" type="button" aria-label="Закрыть">×</button>
+        </div>
+        <div class="levels-controls">
+          <label class="levels-field">
+            <span>Канал</span>
+            <select id="levelsChannel"></select>
+          </label>
+          <label class="levels-field">
+            <span>Гистограмма</span>
+            <select id="histogramScale">
+              <option value="linear">Линейная</option>
+              <option value="log">Логарифмическая</option>
+            </select>
+          </label>
+        </div>
+        <div class="histogram-block">
+          <canvas id="histogramCanvas" class="histogram-canvas" width="512" height="220"></canvas>
+          <div class="histogram-axis">
+            <span>0</span>
+            <span id="histogramMax">255</span>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <footer class="statusbar">
       <span id="imageWidth">Ширина: 0 px</span>
       <span id="imageHeight">Высота: 0 px</span>
@@ -84,6 +130,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 const openButton = document.querySelector<HTMLButtonElement>('#openButton')!
 const saveButton = document.querySelector<HTMLButtonElement>('#saveButton')!
 const pipetteButton = document.querySelector<HTMLButtonElement>('#pipetteButton')!
+const levelsButton = document.querySelector<HTMLButtonElement>('#levelsButton')!
 const saveFormat = document.querySelector<HTMLSelectElement>('#saveFormat')!
 const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas')!
@@ -104,6 +151,12 @@ const pipetteLabB = document.querySelector<HTMLSpanElement>('#pipetteLabB')!
 const pipetteColor = document.querySelector<HTMLSpanElement>('#pipetteColor')!
 const pipettePreview = document.querySelector<HTMLDivElement>('#pipettePreview')!
 const pipettePreviewColor = document.querySelector<HTMLSpanElement>('#pipettePreviewColor')!
+const levelsDialog = document.querySelector<HTMLDialogElement>('#levelsDialog')!
+const levelsCloseButton = document.querySelector<HTMLButtonElement>('#levelsCloseButton')!
+const levelsChannel = document.querySelector<HTMLSelectElement>('#levelsChannel')!
+const histogramScale = document.querySelector<HTMLSelectElement>('#histogramScale')!
+const histogramCanvas = document.querySelector<HTMLCanvasElement>('#histogramCanvas')!
+const histogramMax = document.querySelector<HTMLSpanElement>('#histogramMax')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
@@ -112,6 +165,7 @@ let currentChannels: ChannelType[] = []
 let activeChannels = new Set<ChannelType>()
 let pipetteActive = false
 let pipetteDragging = false
+let currentLevelsMax = 255
 
 function formatLabValue(value: number) {
   return Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)
@@ -179,6 +233,38 @@ function sampleColor(event: MouseEvent, showPreview: boolean) {
   }
 }
 
+function updateLevelsHistogram() {
+  if (!currentImageData) {
+    return
+  }
+
+  const histogram = createHistogram(
+    currentImageData,
+    levelsChannel.value as LevelsChannel,
+    currentLevelsMax,
+  )
+
+  drawHistogram(
+    histogramCanvas,
+    histogram,
+    histogramScale.value as HistogramScale,
+  )
+}
+
+function openLevels() {
+  if (!currentImageData) {
+    return
+  }
+
+  setPipetteActive(false)
+  renderLevelsChannels(levelsChannel, currentChannels)
+  levelsChannel.value = 'master'
+  histogramScale.value = 'linear'
+  histogramMax.textContent = String(currentLevelsMax)
+  updateLevelsHistogram()
+  levelsDialog.showModal()
+}
+
 function renderCurrentImage() {
   if (!currentImageData) {
     return
@@ -188,17 +274,19 @@ function renderCurrentImage() {
   context.putImageData(visibleImage, 0, 0)
 }
 
-function showCanvas(width: number, height: number, depth: string, channels: ChannelType[]) {
+function showCanvas(width: number, height: number, depth: string, channels: ChannelType[], levelsMax = 255) {
   emptyState.hidden = true
   canvas.hidden = false
   channelsPanel.hidden = false
   saveButton.disabled = false
   pipetteButton.disabled = false
+  levelsButton.disabled = false
   resetPipetteInfo()
   imageWidth.textContent = `Ширина: ${width} px`
   imageHeight.textContent = `Высота: ${height} px`
   colorDepth.textContent = `Глубина цвета: ${depth}`
   currentChannels = channels
+  currentLevelsMax = levelsMax
   activeChannels = new Set(channels)
 
   if (currentImageData) {
@@ -255,7 +343,7 @@ async function openGb7(file: File) {
     context.putImageData(image.data, 0, 0)
     currentImageData = image.data
     const channels: ChannelType[] = image.hasMask ? ['gray', 'mask'] : ['gray']
-    showCanvas(image.width, image.height, image.hasMask ? '7 бит + маска' : '7 бит', channels)
+    showCanvas(image.width, image.height, image.hasMask ? '7 бит + маска' : '7 бит', channels, 127)
   } catch {
     alert('Не удалось открыть файл GB7')
   }
@@ -336,6 +424,11 @@ pipetteButton.addEventListener('click', () => {
 
   setPipetteActive(!pipetteActive)
 })
+
+levelsButton.addEventListener('click', openLevels)
+levelsCloseButton.addEventListener('click', () => levelsDialog.close())
+levelsChannel.addEventListener('change', updateLevelsHistogram)
+histogramScale.addEventListener('change', updateLevelsHistogram)
 
 canvas.addEventListener('pointerdown', (event) => {
   if (!pipetteActive || !currentImageData || event.button !== 0) {
