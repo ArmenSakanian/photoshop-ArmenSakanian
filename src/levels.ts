@@ -72,7 +72,7 @@ function createLut(settings: InputLevels, maxLevel: number) {
     }
 
     const normalized = (value - settings.black) / range
-    lut[value] = Math.round(normalized ** settings.gamma * maxLevel)
+    lut[value] = Math.round(normalized ** (1 / settings.gamma) * maxLevel)
   }
 
   return lut
@@ -105,7 +105,7 @@ export function createLevelsSettings(channels: ChannelType[], maxLevel: number) 
 
 export function gammaToMarkerPosition(settings: InputLevels) {
   const range = settings.white - settings.black
-  const normalized = 0.5 ** (1 / settings.gamma)
+  const normalized = 0.5 ** settings.gamma
 
   return settings.black + normalized * range
 }
@@ -118,7 +118,7 @@ export function markerPositionToGamma(position: number, black: number, white: nu
   }
 
   const normalized = Math.min(0.999999, Math.max(0.000001, (position - black) / range))
-  const gamma = Math.log(0.5) / Math.log(normalized)
+  const gamma = Math.log(normalized) / Math.log(0.5)
 
   return Math.min(9.9, Math.max(0.1, gamma))
 }

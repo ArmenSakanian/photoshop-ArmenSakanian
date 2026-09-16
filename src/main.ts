@@ -116,7 +116,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <canvas id="histogramCanvas" class="histogram-canvas" width="512" height="220"></canvas>
             <div class="levels-marker-track">
               <input id="levelsBlackMarker" class="levels-marker levels-marker-black" type="range" min="0" max="255" value="0" aria-label="Точка черного" />
-              <input id="levelsGammaMarker" class="levels-marker levels-marker-gamma" type="range" min="0" max="255" value="128" aria-label="Полутона" />
+              <input id="levelsGammaMarker" class="levels-marker levels-marker-gamma" type="range" min="0" max="255" step="any" value="128" aria-label="Полутона" />
               <input id="levelsWhiteMarker" class="levels-marker levels-marker-white" type="range" min="0" max="255" value="255" aria-label="Точка белого" />
             </div>
           </div>
@@ -321,7 +321,7 @@ function updateLevelsInputs() {
   levelsGammaMarker.max = String(currentLevelsMax)
   levelsWhiteMarker.max = String(currentLevelsMax)
   levelsBlackMarker.value = String(settings.black)
-  levelsGammaMarker.value = String(Math.round(gammaPosition))
+  levelsGammaMarker.value = String(gammaPosition)
   levelsWhiteMarker.value = String(settings.white)
 
   levelsBlackValue.max = String(Math.max(0, settings.white - 1))
