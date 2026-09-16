@@ -4,7 +4,7 @@ import { getImageInfo } from './image-info'
 import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
-import { resizeImageData } from './interpolation'
+import { resizeImageData, type InterpolationMethod } from './interpolation'
 import {
   createHistogram,
   createLevelsPreview,
@@ -51,6 +51,22 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <path d="M3 19H21"></path>
             <path d="M4 17V14H6V11H8V13H10V8H12V10H14V6H16V12H18V9H20V17"></path>
           </svg>
+        </button>
+        <button
+          id="resizeButton"
+          class="tool-button tool-button-labeled"
+          type="button"
+          disabled
+          aria-label="Изменить размер изображения"
+          title="Изменить размер изображения"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="5" width="16" height="14" rx="1.5"></rect>
+            <path d="M8 15 16 9"></path>
+            <path d="M12.5 9H16V12.5"></path>
+            <path d="M11.5 15H8V11.5"></path>
+          </svg>
+          <span>Размер</span>
         </button>
         <select id="saveFormat" aria-label="Формат сохранения">
           <option value="png">PNG</option>
@@ -154,6 +170,77 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div>
     </dialog>
 
+    <dialog id="resizeDialog" class="resize-dialog">
+      <div class="resize-window">
+        <div class="resize-header">
+          <div class="resize-title">Размер изображения</div>
+          <button id="resizeCloseButton" class="resize-close" type="button" aria-label="Закрыть">×</button>
+        </div>
+
+        <div class="resize-summary">
+          <div class="resize-summary-item">
+            <span>До</span>
+            <strong id="resizeBeforePixels">0.00 Мп</strong>
+          </div>
+          <div class="resize-summary-arrow">→</div>
+          <div class="resize-summary-item">
+            <span>После</span>
+            <strong id="resizeAfterPixels">0.00 Мп</strong>
+          </div>
+        </div>
+
+        <div class="resize-fields">
+          <label class="resize-field resize-field-wide">
+            <span>Единицы</span>
+            <select id="resizeUnit">
+              <option value="pixels">Пиксели</option>
+              <option value="percent">Проценты</option>
+            </select>
+          </label>
+
+          <label class="resize-field">
+            <span>Ширина</span>
+            <div class="resize-number-field">
+              <input id="resizeWidth" type="number" min="1" step="1" />
+              <span id="resizeWidthUnit">px</span>
+            </div>
+          </label>
+
+          <label class="resize-field">
+            <span>Высота</span>
+            <div class="resize-number-field">
+              <input id="resizeHeight" type="number" min="1" step="1" />
+              <span id="resizeHeightUnit">px</span>
+            </div>
+          </label>
+
+          <label class="resize-ratio-option resize-field-wide">
+            <input id="resizeKeepRatio" type="checkbox" checked />
+            <span>Сохранять пропорции</span>
+          </label>
+
+          <label class="resize-field resize-field-wide">
+            <span>Интерполяция</span>
+            <div class="resize-method-row">
+              <select id="resizeMethod">
+                <option value="bilinear">Билинейная</option>
+                <option value="nearest">Ближайший сосед</option>
+              </select>
+              <button id="resizeMethodHelp" class="resize-help" type="button" aria-label="Описание интерполяции">?</button>
+              <div id="resizeMethodTooltip" class="resize-tooltip" role="tooltip"></div>
+            </div>
+          </label>
+        </div>
+
+        <div id="resizeError" class="resize-error" aria-live="polite"></div>
+
+        <div class="resize-actions">
+          <button id="resizeCancelButton" class="resize-action" type="button">Отмена</button>
+          <button id="resizeApplyButton" class="resize-action resize-apply" type="button">Изменить</button>
+        </div>
+      </div>
+    </dialog>
+
     <footer class="statusbar">
       <span id="imageWidth">Ширина: 0 px</span>
       <span id="imageHeight">Высота: 0 px</span>
@@ -178,6 +265,7 @@ const openButton = document.querySelector<HTMLButtonElement>('#openButton')!
 const saveButton = document.querySelector<HTMLButtonElement>('#saveButton')!
 const pipetteButton = document.querySelector<HTMLButtonElement>('#pipetteButton')!
 const levelsButton = document.querySelector<HTMLButtonElement>('#levelsButton')!
+const resizeButton = document.querySelector<HTMLButtonElement>('#resizeButton')!
 const saveFormat = document.querySelector<HTMLSelectElement>('#saveFormat')!
 const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas')!
@@ -217,6 +305,21 @@ const levelsPreview = document.querySelector<HTMLInputElement>('#levelsPreview')
 const levelsResetButton = document.querySelector<HTMLButtonElement>('#levelsResetButton')!
 const levelsCancelButton = document.querySelector<HTMLButtonElement>('#levelsCancelButton')!
 const levelsApplyButton = document.querySelector<HTMLButtonElement>('#levelsApplyButton')!
+const resizeDialog = document.querySelector<HTMLDialogElement>('#resizeDialog')!
+const resizeCloseButton = document.querySelector<HTMLButtonElement>('#resizeCloseButton')!
+const resizeBeforePixels = document.querySelector<HTMLElement>('#resizeBeforePixels')!
+const resizeAfterPixels = document.querySelector<HTMLElement>('#resizeAfterPixels')!
+const resizeUnit = document.querySelector<HTMLSelectElement>('#resizeUnit')!
+const resizeWidth = document.querySelector<HTMLInputElement>('#resizeWidth')!
+const resizeHeight = document.querySelector<HTMLInputElement>('#resizeHeight')!
+const resizeWidthUnit = document.querySelector<HTMLSpanElement>('#resizeWidthUnit')!
+const resizeHeightUnit = document.querySelector<HTMLSpanElement>('#resizeHeightUnit')!
+const resizeKeepRatio = document.querySelector<HTMLInputElement>('#resizeKeepRatio')!
+const resizeMethod = document.querySelector<HTMLSelectElement>('#resizeMethod')!
+const resizeMethodTooltip = document.querySelector<HTMLDivElement>('#resizeMethodTooltip')!
+const resizeError = document.querySelector<HTMLDivElement>('#resizeError')!
+const resizeCancelButton = document.querySelector<HTMLButtonElement>('#resizeCancelButton')!
+const resizeApplyButton = document.querySelector<HTMLButtonElement>('#resizeApplyButton')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
@@ -230,9 +333,188 @@ let levelsSettings = new Map<LevelsChannel, InputLevels>()
 let levelsPreviewFrame = 0
 let currentViewScale = 100
 let viewRenderFrame = 0
+let resizeUnitMode: 'pixels' | 'percent' = 'pixels'
+let resizeSyncing = false
 
 function formatLabValue(value: number) {
   return Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)
+}
+
+function formatMegapixels(width: number, height: number) {
+  return `${(width * height / 1_000_000).toFixed(2)} Мп`
+}
+
+function getResizeTarget(unit = resizeUnitMode) {
+  if (!currentImageData) {
+    return null
+  }
+
+  const widthValue = Number(resizeWidth.value)
+  const heightValue = Number(resizeHeight.value)
+
+  if (!Number.isFinite(widthValue) || !Number.isFinite(heightValue)) {
+    return null
+  }
+
+  if (unit === 'percent') {
+    return {
+      width: Math.max(1, Math.round(currentImageData.width * widthValue / 100)),
+      height: Math.max(1, Math.round(currentImageData.height * heightValue / 100)),
+    }
+  }
+
+  return {
+    width: Math.round(widthValue),
+    height: Math.round(heightValue),
+  }
+}
+
+function validateResizeInputs() {
+  if (!currentImageData) {
+    resizeApplyButton.disabled = true
+    return false
+  }
+
+  const widthValue = Number(resizeWidth.value)
+  const heightValue = Number(resizeHeight.value)
+  const maxInput = resizeUnitMode === 'pixels' ? 20000 : 1000
+  const unitName = resizeUnitMode === 'pixels' ? 'пикселей' : 'процентов'
+
+  if (!Number.isFinite(widthValue) || !Number.isFinite(heightValue) || widthValue <= 0 || heightValue <= 0) {
+    resizeError.textContent = 'Ширина и высота должны быть больше нуля.'
+    resizeApplyButton.disabled = true
+    return false
+  }
+
+  if (widthValue > maxInput || heightValue > maxInput) {
+    resizeError.textContent = `Максимальное значение: ${maxInput} ${unitName}.`
+    resizeApplyButton.disabled = true
+    return false
+  }
+
+  const target = getResizeTarget()
+
+  if (!target || target.width > 20000 || target.height > 20000) {
+    resizeError.textContent = 'Итоговая ширина и высота не должны превышать 20000 px.'
+    resizeApplyButton.disabled = true
+    return false
+  }
+
+  if (target.width * target.height > 100_000_000) {
+    resizeError.textContent = 'Итоговый размер не должен превышать 100 мегапикселей.'
+    resizeApplyButton.disabled = true
+    return false
+  }
+
+  resizeError.textContent = ''
+  resizeApplyButton.disabled = false
+  resizeAfterPixels.textContent = formatMegapixels(target.width, target.height)
+  return true
+}
+
+function syncResizeFromWidth() {
+  if (!currentImageData || resizeSyncing || !resizeKeepRatio.checked) {
+    validateResizeInputs()
+    return
+  }
+
+  const value = Number(resizeWidth.value)
+
+  if (!Number.isFinite(value) || value <= 0) {
+    validateResizeInputs()
+    return
+  }
+
+  resizeSyncing = true
+  resizeHeight.value = resizeUnitMode === 'percent'
+    ? String(value)
+    : String(Math.max(1, Math.round(value * currentImageData.height / currentImageData.width)))
+  resizeSyncing = false
+  validateResizeInputs()
+}
+
+function syncResizeFromHeight() {
+  if (!currentImageData || resizeSyncing || !resizeKeepRatio.checked) {
+    validateResizeInputs()
+    return
+  }
+
+  const value = Number(resizeHeight.value)
+
+  if (!Number.isFinite(value) || value <= 0) {
+    validateResizeInputs()
+    return
+  }
+
+  resizeSyncing = true
+  resizeWidth.value = resizeUnitMode === 'percent'
+    ? String(value)
+    : String(Math.max(1, Math.round(value * currentImageData.width / currentImageData.height)))
+  resizeSyncing = false
+  validateResizeInputs()
+}
+
+function updateResizeMethodTooltip() {
+  const descriptions: Record<InterpolationMethod, string> = {
+    bilinear: 'Билинейная интерполяция сглаживает переходы между пикселями и обычно лучше подходит для фотографий.',
+    nearest: 'Ближайший сосед работает быстрее и сохраняет резкие границы, что удобно для пиксельной графики.',
+  }
+
+  resizeMethodTooltip.textContent = descriptions[resizeMethod.value as InterpolationMethod]
+}
+
+function changeResizeUnit() {
+  if (!currentImageData) {
+    return
+  }
+
+  const target = getResizeTarget(resizeUnitMode) ?? {
+    width: currentImageData.width,
+    height: currentImageData.height,
+  }
+  resizeUnitMode = resizeUnit.value as 'pixels' | 'percent'
+  const isPercent = resizeUnitMode === 'percent'
+
+  resizeWidthUnit.textContent = isPercent ? '%' : 'px'
+  resizeHeightUnit.textContent = isPercent ? '%' : 'px'
+  resizeWidth.step = isPercent ? '0.1' : '1'
+  resizeHeight.step = isPercent ? '0.1' : '1'
+  resizeWidth.max = isPercent ? '1000' : '20000'
+  resizeHeight.max = isPercent ? '1000' : '20000'
+
+  if (isPercent) {
+    resizeWidth.value = (target.width / currentImageData.width * 100).toFixed(1)
+    resizeHeight.value = (target.height / currentImageData.height * 100).toFixed(1)
+  } else {
+    resizeWidth.value = String(target.width)
+    resizeHeight.value = String(target.height)
+  }
+
+  validateResizeInputs()
+}
+
+function openResizeDialog() {
+  if (!currentImageData) {
+    return
+  }
+
+  setPipetteActive(false)
+  resizeUnitMode = 'pixels'
+  resizeUnit.value = 'pixels'
+  resizeWidth.value = String(currentImageData.width)
+  resizeHeight.value = String(currentImageData.height)
+  resizeWidthUnit.textContent = 'px'
+  resizeHeightUnit.textContent = 'px'
+  resizeWidth.step = '1'
+  resizeHeight.step = '1'
+  resizeWidth.max = '20000'
+  resizeHeight.max = '20000'
+  resizeKeepRatio.checked = true
+  resizeMethod.value = 'bilinear'
+  resizeBeforePixels.textContent = formatMegapixels(currentImageData.width, currentImageData.height)
+  updateResizeMethodTooltip()
+  validateResizeInputs()
+  resizeDialog.showModal()
 }
 
 function resetPipetteInfo() {
@@ -533,6 +815,7 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
   saveButton.disabled = false
   pipetteButton.disabled = false
   levelsButton.disabled = false
+  resizeButton.disabled = false
   viewScale.disabled = false
   resetPipetteInfo()
   imageWidth.textContent = `Ширина: ${width} px`
@@ -670,6 +953,7 @@ pipetteButton.addEventListener('click', () => {
 })
 
 levelsButton.addEventListener('click', openLevels)
+resizeButton.addEventListener('click', openResizeDialog)
 levelsCloseButton.addEventListener('click', () => levelsDialog.close())
 levelsCancelButton.addEventListener('click', () => levelsDialog.close())
 levelsResetButton.addEventListener('click', resetLevels)
@@ -693,6 +977,24 @@ levelsPreview.addEventListener('change', scheduleLevelsPreview)
 viewScale.addEventListener('input', () => {
   updateViewScale(Number(viewScale.value))
   scheduleViewRender()
+})
+resizeCloseButton.addEventListener('click', () => resizeDialog.close())
+resizeCancelButton.addEventListener('click', () => resizeDialog.close())
+resizeUnit.addEventListener('change', changeResizeUnit)
+resizeWidth.addEventListener('input', syncResizeFromWidth)
+resizeHeight.addEventListener('input', syncResizeFromHeight)
+resizeKeepRatio.addEventListener('change', () => {
+  if (resizeKeepRatio.checked) {
+    syncResizeFromWidth()
+  } else {
+    validateResizeInputs()
+  }
+})
+resizeMethod.addEventListener('change', updateResizeMethodTooltip)
+resizeApplyButton.addEventListener('click', () => {
+  if (validateResizeInputs()) {
+    resizeDialog.close()
+  }
 })
 
 canvas.addEventListener('pointerdown', (event) => {
