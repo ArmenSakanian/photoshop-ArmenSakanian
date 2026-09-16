@@ -9,7 +9,12 @@ export type RgbColor = {
   b: number
 }
 
-export function getPixelPosition(event: MouseEvent, canvas: HTMLCanvasElement): PixelPosition | null {
+export function getPixelPosition(
+  event: MouseEvent,
+  canvas: HTMLCanvasElement,
+  imageWidth = canvas.width,
+  imageHeight = canvas.height,
+): PixelPosition | null {
   const rect = canvas.getBoundingClientRect()
 
   if (rect.width === 0 || rect.height === 0) {
@@ -24,12 +29,12 @@ export function getPixelPosition(event: MouseEvent, canvas: HTMLCanvasElement): 
   }
 
   const x = Math.min(
-    canvas.width - 1,
-    Math.max(0, Math.floor(localX * canvas.width / rect.width)),
+    imageWidth - 1,
+    Math.max(0, Math.floor(localX * imageWidth / rect.width)),
   )
   const y = Math.min(
-    canvas.height - 1,
-    Math.max(0, Math.floor(localY * canvas.height / rect.height)),
+    imageHeight - 1,
+    Math.max(0, Math.floor(localY * imageHeight / rect.height)),
   )
 
   return { x, y }

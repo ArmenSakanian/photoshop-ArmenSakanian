@@ -4,6 +4,7 @@ import { getImageInfo } from './image-info'
 import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
+import { resizeImageData } from './interpolation'
 import {
   createHistogram,
   createLevelsPreview,
@@ -157,6 +158,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <span id="imageWidth">Ширина: 0 px</span>
       <span id="imageHeight">Высота: 0 px</span>
       <span id="colorDepth">Глубина цвета: -</span>
+      <label class="view-scale-control">
+        <span>Масштаб:</span>
+        <input id="viewScale" type="range" min="12" max="300" value="100" disabled />
+        <span id="viewScaleValue">100%</span>
+      </label>
     </footer>
 
     <input
@@ -175,10 +181,13 @@ const levelsButton = document.querySelector<HTMLButtonElement>('#levelsButton')!
 const saveFormat = document.querySelector<HTMLSelectElement>('#saveFormat')!
 const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas')!
+const workspace = document.querySelector<HTMLElement>('.workspace')!
 const emptyState = document.querySelector<HTMLDivElement>('#emptyState')!
 const imageWidth = document.querySelector<HTMLSpanElement>('#imageWidth')!
 const imageHeight = document.querySelector<HTMLSpanElement>('#imageHeight')!
 const colorDepth = document.querySelector<HTMLSpanElement>('#colorDepth')!
+const viewScale = document.querySelector<HTMLInputElement>('#viewScale')!
+const viewScaleValue = document.querySelector<HTMLSpanElement>('#viewScaleValue')!
 const channelsPanel = document.querySelector<HTMLElement>('#channelsPanel')!
 const channelsList = document.querySelector<HTMLDivElement>('#channelsList')!
 const pipetteX = document.querySelector<HTMLSpanElement>('#pipetteX')!
@@ -219,6 +228,8 @@ let pipetteDragging = false
 let currentLevelsMax = 255
 let levelsSettings = new Map<LevelsChannel, InputLevels>()
 let levelsPreviewFrame = 0
+let currentViewScale = 100
+let viewRenderFrame = 0
 
 function formatLabValue(value: number) {
   return Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)
@@ -254,7 +265,12 @@ function sampleColor(event: MouseEvent, showPreview: boolean) {
     return
   }
 
-  const position = getPixelPosition(event, canvas)
+  const position = getPixelPosition(
+    event,
+    canvas,
+    currentImageData.width,
+    currentImageData.height,
+  )
 
   if (!position) {
     hidePipettePreview()
@@ -332,6 +348,16 @@ function updateLevelsInputs() {
   levelsWhiteValue.value = String(settings.white)
 }
 
+function renderImageAtCurrentScale(imageData: ImageData) {
+  const width = Math.max(1, Math.round(imageData.width * currentViewScale / 100))
+  const height = Math.max(1, Math.round(imageData.height * currentViewScale / 100))
+  const scaled = resizeImageData(imageData, width, height, 'bilinear')
+
+  canvas.width = scaled.width
+  canvas.height = scaled.height
+  context.putImageData(scaled, 0, 0)
+}
+
 function renderLevelsPreview() {
   if (!currentImageData) {
     return
@@ -350,7 +376,7 @@ function renderLevelsPreview() {
   )
   const visiblePreview = createChannelView(preview, currentChannels, activeChannels)
 
-  context.putImageData(visiblePreview, 0, 0)
+  renderImageAtCurrentScale(visiblePreview)
 }
 
 function scheduleLevelsPreview() {
@@ -457,7 +483,31 @@ function renderCurrentImage() {
   }
 
   const visibleImage = createChannelView(currentImageData, currentChannels, activeChannels)
-  context.putImageData(visibleImage, 0, 0)
+  renderImageAtCurrentScale(visibleImage)
+}
+
+function updateViewScale(value: number) {
+  currentViewScale = Math.min(300, Math.max(12, Math.round(value)))
+  viewScale.value = String(currentViewScale)
+  viewScaleValue.textContent = `${currentViewScale}%`
+}
+
+function fitImageToWorkspace() {
+  if (!currentImageData) {
+    return
+  }
+
+  const availableWidth = Math.max(1, workspace.clientWidth - 100)
+  const availableHeight = Math.max(1, workspace.clientHeight - 100)
+  const widthScale = availableWidth / currentImageData.width * 100
+  const heightScale = availableHeight / currentImageData.height * 100
+
+  updateViewScale(Math.floor(Math.min(widthScale, heightScale)))
+}
+
+function scheduleViewRender() {
+  cancelAnimationFrame(viewRenderFrame)
+  viewRenderFrame = requestAnimationFrame(renderCurrentImage)
 }
 
 function renderChannelsPanel() {
@@ -483,6 +533,7 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
   saveButton.disabled = false
   pipetteButton.disabled = false
   levelsButton.disabled = false
+  viewScale.disabled = false
   resetPipetteInfo()
   imageWidth.textContent = `Ширина: ${width} px`
   imageHeight.textContent = `Высота: ${height} px`
@@ -492,6 +543,7 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
   activeChannels = new Set(channels)
 
   if (currentImageData) {
+    fitImageToWorkspace()
     renderCurrentImage()
     renderChannelsPanel()
   }
@@ -507,15 +559,16 @@ function openBrowserImage(file: File) {
   const url = URL.createObjectURL(file)
 
   image.onload = async () => {
-    canvas.width = image.naturalWidth
-    canvas.height = image.naturalHeight
+    const sourceCanvas = document.createElement('canvas')
+    const sourceContext = sourceCanvas.getContext('2d')!
 
-    context.clearRect(0, 0, canvas.width, canvas.height)
-    context.drawImage(image, 0, 0)
+    sourceCanvas.width = image.naturalWidth
+    sourceCanvas.height = image.naturalHeight
+    sourceContext.drawImage(image, 0, 0)
 
-    currentImageData = context.getImageData(0, 0, canvas.width, canvas.height)
+    currentImageData = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height)
     const info = await getImageInfo(file)
-    showCanvas(canvas.width, canvas.height, info.depth, info.channels)
+    showCanvas(currentImageData.width, currentImageData.height, info.depth, info.channels)
     URL.revokeObjectURL(url)
   }
 
@@ -532,9 +585,6 @@ async function openGb7(file: File) {
     const buffer = await file.arrayBuffer()
     const image = decodeGb7(buffer)
 
-    canvas.width = image.width
-    canvas.height = image.height
-    context.putImageData(image.data, 0, 0)
     currentImageData = image.data
     const channels: ChannelType[] = image.hasMask ? ['gray', 'mask'] : ['gray']
     showCanvas(image.width, image.height, image.hasMask ? '7 бит + маска' : '7 бит', channels, 127)
@@ -640,6 +690,10 @@ levelsBlackValue.addEventListener('change', () => changeBlackPoint(Number(levels
 levelsWhiteValue.addEventListener('change', () => changeWhitePoint(Number(levelsWhiteValue.value)))
 levelsGammaValue.addEventListener('change', () => changeGamma(Number(levelsGammaValue.value)))
 levelsPreview.addEventListener('change', scheduleLevelsPreview)
+viewScale.addEventListener('input', () => {
+  updateViewScale(Number(viewScale.value))
+  scheduleViewRender()
+})
 
 canvas.addEventListener('pointerdown', (event) => {
   if (!pipetteActive || !currentImageData || event.button !== 0) {
