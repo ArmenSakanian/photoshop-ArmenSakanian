@@ -517,6 +517,43 @@ function openResizeDialog() {
   resizeDialog.showModal()
 }
 
+function keepBinaryMask(imageData: ImageData) {
+  if (!currentChannels.includes('mask')) {
+    return imageData
+  }
+
+  const pixels = new Uint8ClampedArray(imageData.data)
+
+  for (let index = 3; index < pixels.length; index += 4) {
+    pixels[index] = pixels[index] >= 128 ? 255 : 0
+  }
+
+  return new ImageData(pixels, imageData.width, imageData.height)
+}
+
+function applyResize() {
+  if (!currentImageData || !validateResizeInputs()) {
+    return
+  }
+
+  const target = getResizeTarget()
+
+  if (!target) {
+    return
+  }
+
+  const method = resizeMethod.value as InterpolationMethod
+  const resized = resizeImageData(currentImageData, target.width, target.height, method)
+
+  currentImageData = keepBinaryMask(resized)
+  imageWidth.textContent = `Ширина: ${currentImageData.width} px`
+  imageHeight.textContent = `Высота: ${currentImageData.height} px`
+  resetPipetteInfo()
+  renderCurrentImage()
+  renderChannelsPanel()
+  resizeDialog.close()
+}
+
 function resetPipetteInfo() {
   pipetteX.textContent = 'X: -'
   pipetteY.textContent = 'Y: -'
@@ -991,11 +1028,7 @@ resizeKeepRatio.addEventListener('change', () => {
   }
 })
 resizeMethod.addEventListener('change', updateResizeMethodTooltip)
-resizeApplyButton.addEventListener('click', () => {
-  if (validateResizeInputs()) {
-    resizeDialog.close()
-  }
-})
+resizeApplyButton.addEventListener('click', applyResize)
 
 canvas.addEventListener('pointerdown', (event) => {
   if (!pipetteActive || !currentImageData || event.button !== 0) {
