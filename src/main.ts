@@ -5,6 +5,7 @@ import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
 import { resizeImageData, type InterpolationMethod } from './interpolation'
+import { formatKernelValue, getKernelPreset, kernelPresets } from './kernels'
 import {
   createHistogram,
   createLevelsPreview,
@@ -67,6 +68,20 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <path d="M11.5 15H8V11.5"></path>
           </svg>
           <span>Размер</span>
+        </button>
+        <button
+          id="filterButton"
+          class="tool-button tool-button-labeled"
+          type="button"
+          disabled
+          aria-label="Фильтрация изображения"
+          title="Фильтрация изображения"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="1.5"></rect>
+            <path d="M9.33 4V20M14.67 4V20M4 9.33H20M4 14.67H20"></path>
+          </svg>
+          <span>Фильтр</span>
         </button>
         <select id="saveFormat" aria-label="Формат сохранения">
           <option value="png">PNG</option>
@@ -241,6 +256,65 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div>
     </dialog>
 
+    <dialog id="filterDialog" class="filter-dialog">
+      <div class="filter-window">
+        <div class="filter-header">
+          <div class="filter-title">Фильтрация</div>
+          <button id="filterCloseIcon" class="filter-close" type="button" aria-label="Закрыть">×</button>
+        </div>
+
+        <div class="filter-layout">
+          <div class="filter-main">
+            <label class="filter-field">
+              <span>Предустановка</span>
+              <select id="kernelPreset">
+                ${kernelPresets.map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join('')}
+                <option value="custom">Пользовательское</option>
+              </select>
+            </label>
+
+            <div class="kernel-section">
+              <div class="filter-section-title">Ядро 3×3</div>
+              <div id="kernelGrid" class="kernel-grid">
+                ${Array.from({ length: 9 }, (_, index) => `<input class="kernel-value" type="number" step="any" value="${index === 4 ? 1 : 0}" aria-label="Коэффициент ядра ${index + 1}" />`).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-options">
+            <fieldset class="filter-group">
+              <legend>Каналы</legend>
+              <div id="filterChannels" class="filter-channels"></div>
+            </fieldset>
+
+            <label class="filter-field">
+              <span>Обработка краёв</span>
+              <select id="edgeHandling">
+                <option value="black">Заполнение чёрным</option>
+                <option value="white">Заполнение белым</option>
+                <option value="copy">Копирование</option>
+              </select>
+            </label>
+
+            <label class="filter-preview-option">
+              <input id="filterPreview" type="checkbox" checked />
+              <span>Предпросмотр</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="filterError" class="filter-error" aria-live="polite"></div>
+
+        <div class="filter-actions">
+          <button id="filterResetButton" class="filter-action filter-reset" type="button">Сбросить</button>
+          <div class="filter-action-group">
+            <button id="filterCloseButton" class="filter-action" type="button">Закрыть</button>
+            <button id="filterApplyButton" class="filter-action filter-apply" type="button">Применить</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
     <footer class="statusbar">
       <span id="imageWidth">Ширина: 0 px</span>
       <span id="imageHeight">Высота: 0 px</span>
@@ -266,6 +340,7 @@ const saveButton = document.querySelector<HTMLButtonElement>('#saveButton')!
 const pipetteButton = document.querySelector<HTMLButtonElement>('#pipetteButton')!
 const levelsButton = document.querySelector<HTMLButtonElement>('#levelsButton')!
 const resizeButton = document.querySelector<HTMLButtonElement>('#resizeButton')!
+const filterButton = document.querySelector<HTMLButtonElement>('#filterButton')!
 const saveFormat = document.querySelector<HTMLSelectElement>('#saveFormat')!
 const fileInput = document.querySelector<HTMLInputElement>('#fileInput')!
 const canvas = document.querySelector<HTMLCanvasElement>('#canvas')!
@@ -320,6 +395,17 @@ const resizeMethodTooltip = document.querySelector<HTMLDivElement>('#resizeMetho
 const resizeError = document.querySelector<HTMLDivElement>('#resizeError')!
 const resizeCancelButton = document.querySelector<HTMLButtonElement>('#resizeCancelButton')!
 const resizeApplyButton = document.querySelector<HTMLButtonElement>('#resizeApplyButton')!
+const filterDialog = document.querySelector<HTMLDialogElement>('#filterDialog')!
+const filterCloseIcon = document.querySelector<HTMLButtonElement>('#filterCloseIcon')!
+const kernelPreset = document.querySelector<HTMLSelectElement>('#kernelPreset')!
+const kernelInputs = Array.from(document.querySelectorAll<HTMLInputElement>('.kernel-value'))
+const filterChannels = document.querySelector<HTMLDivElement>('#filterChannels')!
+const edgeHandling = document.querySelector<HTMLSelectElement>('#edgeHandling')!
+const filterPreview = document.querySelector<HTMLInputElement>('#filterPreview')!
+const filterError = document.querySelector<HTMLDivElement>('#filterError')!
+const filterResetButton = document.querySelector<HTMLButtonElement>('#filterResetButton')!
+const filterCloseButton = document.querySelector<HTMLButtonElement>('#filterCloseButton')!
+const filterApplyButton = document.querySelector<HTMLButtonElement>('#filterApplyButton')!
 const context = canvas.getContext('2d')!
 
 let currentFileName = 'image'
@@ -335,6 +421,112 @@ let currentViewScale = 100
 let viewRenderFrame = 0
 let resizeUnitMode: 'pixels' | 'percent' = 'pixels'
 let resizeSyncing = false
+let filterSelectedChannels = new Set<ChannelType>()
+
+function getFilterChannelName(channel: ChannelType) {
+  const names: Record<ChannelType, string> = {
+    gray: 'Серый',
+    red: 'Красный',
+    green: 'Зелёный',
+    blue: 'Синий',
+    alpha: 'Альфа',
+    mask: 'Маска',
+  }
+
+  return names[channel]
+}
+
+function fillKernelInputs(presetId: string) {
+  const preset = getKernelPreset(presetId)
+
+  kernelInputs.forEach((input, index) => {
+    input.value = formatKernelValue(preset.values[index])
+  })
+
+  filterError.textContent = ''
+  filterApplyButton.disabled = false
+}
+
+function validateKernelInputs() {
+  const valid = kernelInputs.every((input) => Number.isFinite(Number(input.value)) && input.value.trim() !== '')
+
+  if (!valid) {
+    filterError.textContent = 'Все 9 коэффициентов ядра должны быть числами.'
+    filterApplyButton.disabled = true
+    return false
+  }
+
+  if (filterSelectedChannels.size === 0) {
+    filterError.textContent = 'Выберите хотя бы один канал.'
+    filterApplyButton.disabled = true
+    return false
+  }
+
+  filterError.textContent = ''
+  filterApplyButton.disabled = false
+  return true
+}
+
+function renderFilterChannels() {
+  filterChannels.replaceChildren()
+  filterSelectedChannels = new Set(currentChannels)
+
+  for (const channel of currentChannels) {
+    const label = document.createElement('label')
+    const input = document.createElement('input')
+    const text = document.createElement('span')
+
+    label.className = 'filter-channel-option'
+    input.type = 'checkbox'
+    input.checked = true
+    input.value = channel
+    text.textContent = getFilterChannelName(channel)
+
+    input.addEventListener('change', () => {
+      if (input.checked) {
+        filterSelectedChannels.add(channel)
+      } else {
+        filterSelectedChannels.delete(channel)
+      }
+
+      validateKernelInputs()
+    })
+
+    label.append(input, text)
+    filterChannels.append(label)
+  }
+}
+
+function resetFilterDialog() {
+  kernelPreset.value = 'identity'
+  fillKernelInputs('identity')
+  edgeHandling.value = 'black'
+  filterPreview.checked = true
+  renderFilterChannels()
+  validateKernelInputs()
+}
+
+function openFilterDialog() {
+  if (!currentImageData) {
+    return
+  }
+
+  setPipetteActive(false)
+  resetFilterDialog()
+  filterDialog.showModal()
+}
+
+function closeFilterDialog() {
+  filterDialog.close()
+}
+
+function acceptFilterSettings() {
+  if (!validateKernelInputs()) {
+    return
+  }
+
+  filterDialog.close()
+}
 
 function formatLabValue(value: number) {
   return Math.abs(value) < 0.005 ? '0.00' : value.toFixed(2)
@@ -853,6 +1045,7 @@ function showCanvas(width: number, height: number, depth: string, channels: Chan
   pipetteButton.disabled = false
   levelsButton.disabled = false
   resizeButton.disabled = false
+  filterButton.disabled = false
   viewScale.disabled = false
   resetPipetteInfo()
   imageWidth.textContent = `Ширина: ${width} px`
@@ -991,6 +1184,7 @@ pipetteButton.addEventListener('click', () => {
 
 levelsButton.addEventListener('click', openLevels)
 resizeButton.addEventListener('click', openResizeDialog)
+filterButton.addEventListener('click', openFilterDialog)
 levelsCloseButton.addEventListener('click', () => levelsDialog.close())
 levelsCancelButton.addEventListener('click', () => levelsDialog.close())
 levelsResetButton.addEventListener('click', resetLevels)
@@ -1029,6 +1223,24 @@ resizeKeepRatio.addEventListener('change', () => {
 })
 resizeMethod.addEventListener('change', updateResizeMethodTooltip)
 resizeApplyButton.addEventListener('click', applyResize)
+filterCloseIcon.addEventListener('click', closeFilterDialog)
+filterCloseButton.addEventListener('click', closeFilterDialog)
+filterResetButton.addEventListener('click', resetFilterDialog)
+filterApplyButton.addEventListener('click', acceptFilterSettings)
+kernelPreset.addEventListener('change', () => {
+  if (kernelPreset.value !== 'custom') {
+    fillKernelInputs(kernelPreset.value)
+  }
+
+  validateKernelInputs()
+})
+
+for (const input of kernelInputs) {
+  input.addEventListener('input', () => {
+    kernelPreset.value = 'custom'
+    validateKernelInputs()
+  })
+}
 
 canvas.addEventListener('pointerdown', (event) => {
   if (!pipetteActive || !currentImageData || event.button !== 0) {
