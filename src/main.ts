@@ -5,7 +5,8 @@ import { createChannelView, renderChannels, type ChannelType } from './channels'
 import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
 import { resizeImageData, type InterpolationMethod } from './interpolation'
-import { formatKernelValue, getKernelPreset, kernelPresets } from './kernels'
+import { formatKernelValue, getKernelPreset, kernelPresets, type EdgeHandling } from './kernels'
+import { applyKernel } from './convolution'
 import {
   createHistogram,
   createLevelsPreview,
@@ -422,6 +423,7 @@ let viewRenderFrame = 0
 let resizeUnitMode: 'pixels' | 'percent' = 'pixels'
 let resizeSyncing = false
 let filterSelectedChannels = new Set<ChannelType>()
+let filterPreviewFrame = 0
 
 function getFilterChannelName(channel: ChannelType) {
   const names: Record<ChannelType, string> = {
@@ -442,15 +444,17 @@ function fillKernelInputs(presetId: string) {
   kernelInputs.forEach((input, index) => {
     input.value = formatKernelValue(preset.values[index])
   })
+}
 
-  filterError.textContent = ''
-  filterApplyButton.disabled = false
+function getKernelValues() {
+  const values = kernelInputs.map((input) => Number(input.value))
+  const valid = kernelInputs.every((input, index) => input.value.trim() !== '' && Number.isFinite(values[index]))
+
+  return valid ? values : null
 }
 
 function validateKernelInputs() {
-  const valid = kernelInputs.every((input) => Number.isFinite(Number(input.value)) && input.value.trim() !== '')
-
-  if (!valid) {
+  if (!getKernelValues()) {
     filterError.textContent = 'Все 9 коэффициентов ядра должны быть числами.'
     filterApplyButton.disabled = true
     return false
@@ -465,6 +469,35 @@ function validateKernelInputs() {
   filterError.textContent = ''
   filterApplyButton.disabled = false
   return true
+}
+
+function renderFilterPreview() {
+  if (!currentImageData) {
+    return
+  }
+
+  const kernel = getKernelValues()
+
+  if (!filterPreview.checked || !kernel || filterSelectedChannels.size === 0) {
+    renderCurrentImage()
+    return
+  }
+
+  const preview = applyKernel(
+    currentImageData,
+    kernel,
+    currentChannels,
+    filterSelectedChannels,
+    edgeHandling.value as EdgeHandling,
+  )
+  const visiblePreview = createChannelView(preview, currentChannels, activeChannels)
+
+  renderImageAtCurrentScale(visiblePreview)
+}
+
+function scheduleFilterPreview() {
+  cancelAnimationFrame(filterPreviewFrame)
+  filterPreviewFrame = requestAnimationFrame(renderFilterPreview)
 }
 
 function renderFilterChannels() {
@@ -490,6 +523,7 @@ function renderFilterChannels() {
       }
 
       validateKernelInputs()
+      scheduleFilterPreview()
     })
 
     label.append(input, text)
@@ -504,6 +538,10 @@ function resetFilterDialog() {
   filterPreview.checked = true
   renderFilterChannels()
   validateKernelInputs()
+
+  if (filterDialog.open) {
+    scheduleFilterPreview()
+  }
 }
 
 function openFilterDialog() {
@@ -514,6 +552,7 @@ function openFilterDialog() {
   setPipetteActive(false)
   resetFilterDialog()
   filterDialog.showModal()
+  scheduleFilterPreview()
 }
 
 function closeFilterDialog() {
@@ -521,10 +560,27 @@ function closeFilterDialog() {
 }
 
 function acceptFilterSettings() {
-  if (!validateKernelInputs()) {
+  if (!currentImageData || !validateKernelInputs()) {
     return
   }
 
+  const kernel = getKernelValues()
+
+  if (!kernel) {
+    return
+  }
+
+  cancelAnimationFrame(filterPreviewFrame)
+  currentImageData = applyKernel(
+    currentImageData,
+    kernel,
+    currentChannels,
+    filterSelectedChannels,
+    edgeHandling.value as EdgeHandling,
+  )
+  resetPipetteInfo()
+  renderCurrentImage()
+  renderChannelsPanel()
   filterDialog.close()
 }
 
@@ -1227,18 +1283,26 @@ filterCloseIcon.addEventListener('click', closeFilterDialog)
 filterCloseButton.addEventListener('click', closeFilterDialog)
 filterResetButton.addEventListener('click', resetFilterDialog)
 filterApplyButton.addEventListener('click', acceptFilterSettings)
+filterDialog.addEventListener('close', () => {
+  cancelAnimationFrame(filterPreviewFrame)
+  renderCurrentImage()
+})
+filterPreview.addEventListener('change', scheduleFilterPreview)
+edgeHandling.addEventListener('change', scheduleFilterPreview)
 kernelPreset.addEventListener('change', () => {
   if (kernelPreset.value !== 'custom') {
     fillKernelInputs(kernelPreset.value)
   }
 
   validateKernelInputs()
+  scheduleFilterPreview()
 })
 
 for (const input of kernelInputs) {
   input.addEventListener('input', () => {
     kernelPreset.value = 'custom'
     validateKernelInputs()
+    scheduleFilterPreview()
   })
 }
 
