@@ -6,7 +6,7 @@ import { getPixelPosition, getPixelRgb } from './pipette'
 import { rgbToLab } from './color'
 import { resizeImageData, type InterpolationMethod } from './interpolation'
 import { formatKernelValue, getKernelPreset, kernelPresets, type EdgeHandling } from './kernels'
-import { applyKernel } from './convolution'
+import { applyKernelAsync } from './convolution'
 import {
   createHistogram,
   createLevelsPreview,
@@ -424,6 +424,9 @@ let resizeUnitMode: 'pixels' | 'percent' = 'pixels'
 let resizeSyncing = false
 let filterSelectedChannels = new Set<ChannelType>()
 let filterPreviewFrame = 0
+let filterPreviewController: AbortController | null = null
+let filterApplyController: AbortController | null = null
+let filterApplying = false
 
 function getFilterChannelName(channel: ChannelType) {
   const names: Record<ChannelType, string> = {
@@ -467,12 +470,44 @@ function validateKernelInputs() {
   }
 
   filterError.textContent = ''
-  filterApplyButton.disabled = false
+  filterApplyButton.disabled = filterApplying
   return true
 }
 
-function renderFilterPreview() {
-  if (!currentImageData) {
+function abortFilterPreview() {
+  cancelAnimationFrame(filterPreviewFrame)
+  filterPreviewController?.abort()
+  filterPreviewController = null
+}
+
+function setFilterApplying(value: boolean) {
+  filterApplying = value
+  kernelPreset.disabled = value
+  edgeHandling.disabled = value
+  filterPreview.disabled = value
+  filterResetButton.disabled = value
+
+  for (const input of kernelInputs) {
+    input.disabled = value
+  }
+
+  filterChannels.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+    input.disabled = value
+  })
+
+  filterApplyButton.textContent = value ? 'Обработка...' : 'Применить'
+
+  if (value) {
+    filterApplyButton.disabled = true
+  } else {
+    validateKernelInputs()
+  }
+}
+
+async function renderFilterPreview() {
+  const source = currentImageData
+
+  if (!source || !filterDialog.open || filterApplying) {
     return
   }
 
@@ -483,21 +518,46 @@ function renderFilterPreview() {
     return
   }
 
-  const preview = applyKernel(
-    currentImageData,
-    kernel,
-    currentChannels,
-    filterSelectedChannels,
-    edgeHandling.value as EdgeHandling,
-  )
-  const visiblePreview = createChannelView(preview, currentChannels, activeChannels)
+  const controller = new AbortController()
+  filterPreviewController = controller
 
-  renderImageAtCurrentScale(visiblePreview)
+  try {
+    const preview = await applyKernelAsync(
+      source,
+      kernel,
+      [...currentChannels],
+      new Set(filterSelectedChannels),
+      edgeHandling.value as EdgeHandling,
+      controller.signal,
+    )
+
+    if (controller.signal.aborted || currentImageData !== source || !filterDialog.open || filterApplying) {
+      return
+    }
+
+    const visiblePreview = createChannelView(preview, currentChannels, activeChannels)
+    renderImageAtCurrentScale(visiblePreview)
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      console.error(error)
+    }
+  } finally {
+    if (filterPreviewController === controller) {
+      filterPreviewController = null
+    }
+  }
 }
 
 function scheduleFilterPreview() {
-  cancelAnimationFrame(filterPreviewFrame)
-  filterPreviewFrame = requestAnimationFrame(renderFilterPreview)
+  abortFilterPreview()
+
+  if (filterApplying) {
+    return
+  }
+
+  filterPreviewFrame = requestAnimationFrame(() => {
+    void renderFilterPreview()
+  })
 }
 
 function renderFilterChannels() {
@@ -556,11 +616,16 @@ function openFilterDialog() {
 }
 
 function closeFilterDialog() {
+  abortFilterPreview()
+  filterApplyController?.abort()
+  filterApplyController = null
   filterDialog.close()
 }
 
-function acceptFilterSettings() {
-  if (!currentImageData || !validateKernelInputs()) {
+async function acceptFilterSettings() {
+  const source = currentImageData
+
+  if (!source || filterApplying || !validateKernelInputs()) {
     return
   }
 
@@ -570,18 +635,43 @@ function acceptFilterSettings() {
     return
   }
 
-  cancelAnimationFrame(filterPreviewFrame)
-  currentImageData = applyKernel(
-    currentImageData,
-    kernel,
-    currentChannels,
-    filterSelectedChannels,
-    edgeHandling.value as EdgeHandling,
-  )
-  resetPipetteInfo()
-  renderCurrentImage()
-  renderChannelsPanel()
-  filterDialog.close()
+  abortFilterPreview()
+  const controller = new AbortController()
+  filterApplyController = controller
+  setFilterApplying(true)
+
+  try {
+    const result = await applyKernelAsync(
+      source,
+      kernel,
+      [...currentChannels],
+      new Set(filterSelectedChannels),
+      edgeHandling.value as EdgeHandling,
+      controller.signal,
+    )
+
+    if (controller.signal.aborted || currentImageData !== source || !filterDialog.open) {
+      return
+    }
+
+    filterApplyController = null
+    currentImageData = result
+    resetPipetteInfo()
+    renderCurrentImage()
+    renderChannelsPanel()
+    filterDialog.close()
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === 'AbortError')) {
+      filterError.textContent = 'Не удалось применить фильтр.'
+      console.error(error)
+    }
+  } finally {
+    if (filterApplyController === controller) {
+      filterApplyController = null
+    }
+
+    setFilterApplying(false)
+  }
 }
 
 function formatLabValue(value: number) {
@@ -1282,9 +1372,14 @@ resizeApplyButton.addEventListener('click', applyResize)
 filterCloseIcon.addEventListener('click', closeFilterDialog)
 filterCloseButton.addEventListener('click', closeFilterDialog)
 filterResetButton.addEventListener('click', resetFilterDialog)
-filterApplyButton.addEventListener('click', acceptFilterSettings)
+filterApplyButton.addEventListener('click', () => {
+  void acceptFilterSettings()
+})
 filterDialog.addEventListener('close', () => {
-  cancelAnimationFrame(filterPreviewFrame)
+  abortFilterPreview()
+  filterApplyController?.abort()
+  filterApplyController = null
+  setFilterApplying(false)
   renderCurrentImage()
 })
 filterPreview.addEventListener('change', scheduleFilterPreview)

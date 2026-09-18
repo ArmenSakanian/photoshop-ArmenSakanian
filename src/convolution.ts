@@ -62,24 +62,22 @@ function convolveChannel(
   return clampByte(value)
 }
 
-export function applyKernel(
-  imageData: ImageData,
+function processRows(
+  source: Uint8ClampedArray,
+  result: Uint8ClampedArray,
+  width: number,
+  height: number,
+  startY: number,
+  endY: number,
   kernel: readonly number[],
   channels: readonly ChannelType[],
   selectedChannels: ReadonlySet<ChannelType>,
   edgeHandling: EdgeHandling,
 ) {
-  if (kernel.length !== 9) {
-    throw new Error('Ядро должно содержать 9 коэффициентов')
-  }
-
-  const { width, height } = imageData
-  const source = imageData.data
-  const result = new Uint8ClampedArray(source)
   const hasGray = channels.includes('gray')
   const hasMask = channels.includes('mask')
 
-  for (let y = 0; y < height; y++) {
+  for (let y = startY; y < endY; y++) {
     for (let x = 0; x < width; x++) {
       const index = (y * width + x) * 4
 
@@ -116,6 +114,90 @@ export function applyKernel(
       }
     }
   }
+}
 
+function validateKernel(kernel: readonly number[]) {
+  if (kernel.length !== 9) {
+    throw new Error('Ядро должно содержать 9 коэффициентов')
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException('Операция отменена', 'AbortError')
+  }
+}
+
+function yieldToBrowser() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
+export function applyKernel(
+  imageData: ImageData,
+  kernel: readonly number[],
+  channels: readonly ChannelType[],
+  selectedChannels: ReadonlySet<ChannelType>,
+  edgeHandling: EdgeHandling,
+) {
+  validateKernel(kernel)
+
+  const { width, height } = imageData
+  const source = imageData.data
+  const result = new Uint8ClampedArray(source)
+
+  processRows(
+    source,
+    result,
+    width,
+    height,
+    0,
+    height,
+    kernel,
+    channels,
+    selectedChannels,
+    edgeHandling,
+  )
+
+  return new ImageData(result, width, height)
+}
+
+export async function applyKernelAsync(
+  imageData: ImageData,
+  kernel: readonly number[],
+  channels: readonly ChannelType[],
+  selectedChannels: ReadonlySet<ChannelType>,
+  edgeHandling: EdgeHandling,
+  signal?: AbortSignal,
+) {
+  validateKernel(kernel)
+  throwIfAborted(signal)
+
+  const { width, height } = imageData
+  const source = imageData.data
+  const result = new Uint8ClampedArray(source)
+  const rowsPerBatch = Math.max(1, Math.floor(60_000 / Math.max(1, width)))
+
+  for (let startY = 0; startY < height; startY += rowsPerBatch) {
+    throwIfAborted(signal)
+
+    processRows(
+      source,
+      result,
+      width,
+      height,
+      startY,
+      Math.min(height, startY + rowsPerBatch),
+      kernel,
+      channels,
+      selectedChannels,
+      edgeHandling,
+    )
+
+    if (startY + rowsPerBatch < height) {
+      await yieldToBrowser()
+    }
+  }
+
+  throwIfAborted(signal)
   return new ImageData(result, width, height)
 }
