@@ -7,6 +7,7 @@ import { rgbToLab } from './color'
 import { resizeImageData, type InterpolationMethod } from './interpolation'
 import { formatKernelValue, getKernelPreset, kernelPresets, type EdgeHandling } from './kernels'
 import { applyKernelAsync } from './convolution'
+import { applyMedianAsync } from './median'
 import {
   createHistogram,
   createLevelsPreview,
@@ -270,11 +271,12 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
               <span>Предустановка</span>
               <select id="kernelPreset">
                 ${kernelPresets.map((preset) => `<option value="${preset.id}">${preset.name}</option>`).join('')}
+                <option value="median">Медианная фильтрация 3×3</option>
                 <option value="custom">Пользовательское</option>
               </select>
             </label>
 
-            <div class="kernel-section">
+            <div id="kernelSection" class="kernel-section">
               <div class="filter-section-title">Ядро 3×3</div>
               <div id="kernelGrid" class="kernel-grid">
                 ${Array.from({ length: 9 }, (_, index) => `<input class="kernel-value" type="number" step="any" value="${index === 4 ? 1 : 0}" aria-label="Коэффициент ядра ${index + 1}" />`).join('')}
@@ -399,6 +401,7 @@ const resizeApplyButton = document.querySelector<HTMLButtonElement>('#resizeAppl
 const filterDialog = document.querySelector<HTMLDialogElement>('#filterDialog')!
 const filterCloseIcon = document.querySelector<HTMLButtonElement>('#filterCloseIcon')!
 const kernelPreset = document.querySelector<HTMLSelectElement>('#kernelPreset')!
+const kernelSection = document.querySelector<HTMLDivElement>('#kernelSection')!
 const kernelInputs = Array.from(document.querySelectorAll<HTMLInputElement>('.kernel-value'))
 const filterChannels = document.querySelector<HTMLDivElement>('#filterChannels')!
 const edgeHandling = document.querySelector<HTMLSelectElement>('#edgeHandling')!
@@ -456,8 +459,16 @@ function getKernelValues() {
   return valid ? values : null
 }
 
+function isMedianFilterSelected() {
+  return kernelPreset.value === 'median'
+}
+
+function updateFilterTypeUi() {
+  kernelSection.hidden = isMedianFilterSelected()
+}
+
 function validateKernelInputs() {
-  if (!getKernelValues()) {
+  if (!isMedianFilterSelected() && !getKernelValues()) {
     filterError.textContent = 'Все 9 коэффициентов ядра должны быть числами.'
     filterApplyButton.disabled = true
     return false
@@ -511,9 +522,10 @@ async function renderFilterPreview() {
     return
   }
 
-  const kernel = getKernelValues()
+  const medianFilter = isMedianFilterSelected()
+  const kernel = medianFilter ? null : getKernelValues()
 
-  if (!filterPreview.checked || !kernel || filterSelectedChannels.size === 0) {
+  if (!filterPreview.checked || (!medianFilter && !kernel) || filterSelectedChannels.size === 0) {
     renderCurrentImage()
     return
   }
@@ -522,14 +534,22 @@ async function renderFilterPreview() {
   filterPreviewController = controller
 
   try {
-    const preview = await applyKernelAsync(
-      source,
-      kernel,
-      [...currentChannels],
-      new Set(filterSelectedChannels),
-      edgeHandling.value as EdgeHandling,
-      controller.signal,
-    )
+    const preview = medianFilter
+      ? await applyMedianAsync(
+        source,
+        [...currentChannels],
+        new Set(filterSelectedChannels),
+        edgeHandling.value as EdgeHandling,
+        controller.signal,
+      )
+      : await applyKernelAsync(
+        source,
+        kernel!,
+        [...currentChannels],
+        new Set(filterSelectedChannels),
+        edgeHandling.value as EdgeHandling,
+        controller.signal,
+      )
 
     if (controller.signal.aborted || currentImageData !== source || !filterDialog.open || filterApplying) {
       return
@@ -596,6 +616,7 @@ function resetFilterDialog() {
   fillKernelInputs('identity')
   edgeHandling.value = 'black'
   filterPreview.checked = true
+  updateFilterTypeUi()
   renderFilterChannels()
   validateKernelInputs()
 
@@ -629,9 +650,10 @@ async function acceptFilterSettings() {
     return
   }
 
-  const kernel = getKernelValues()
+  const medianFilter = isMedianFilterSelected()
+  const kernel = medianFilter ? null : getKernelValues()
 
-  if (!kernel) {
+  if (!medianFilter && !kernel) {
     return
   }
 
@@ -641,14 +663,22 @@ async function acceptFilterSettings() {
   setFilterApplying(true)
 
   try {
-    const result = await applyKernelAsync(
-      source,
-      kernel,
-      [...currentChannels],
-      new Set(filterSelectedChannels),
-      edgeHandling.value as EdgeHandling,
-      controller.signal,
-    )
+    const result = medianFilter
+      ? await applyMedianAsync(
+        source,
+        [...currentChannels],
+        new Set(filterSelectedChannels),
+        edgeHandling.value as EdgeHandling,
+        controller.signal,
+      )
+      : await applyKernelAsync(
+        source,
+        kernel!,
+        [...currentChannels],
+        new Set(filterSelectedChannels),
+        edgeHandling.value as EdgeHandling,
+        controller.signal,
+      )
 
     if (controller.signal.aborted || currentImageData !== source || !filterDialog.open) {
       return
@@ -1385,10 +1415,11 @@ filterDialog.addEventListener('close', () => {
 filterPreview.addEventListener('change', scheduleFilterPreview)
 edgeHandling.addEventListener('change', scheduleFilterPreview)
 kernelPreset.addEventListener('change', () => {
-  if (kernelPreset.value !== 'custom') {
+  if (kernelPreset.value !== 'custom' && kernelPreset.value !== 'median') {
     fillKernelInputs(kernelPreset.value)
   }
 
+  updateFilterTypeUi()
   validateKernelInputs()
   scheduleFilterPreview()
 })
@@ -1396,6 +1427,7 @@ kernelPreset.addEventListener('change', () => {
 for (const input of kernelInputs) {
   input.addEventListener('input', () => {
     kernelPreset.value = 'custom'
+    updateFilterTypeUi()
     validateKernelInputs()
     scheduleFilterPreview()
   })
