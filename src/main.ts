@@ -994,9 +994,13 @@ function updateLevelsHistogram() {
     return
   }
 
+  const selectedChannel = levelsChannel.value as LevelsChannel
+  const histogramChannel = selectedChannel === 'master' && currentChannels.includes('gray')
+    ? 'gray'
+    : selectedChannel
   const histogram = createHistogram(
     currentImageData,
-    levelsChannel.value as LevelsChannel,
+    histogramChannel,
     currentLevelsMax,
   )
 
